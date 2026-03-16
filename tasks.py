@@ -1,5 +1,7 @@
 from crewai import Task
 
+from tools import WORKSPACE_ROOT
+
 
 def create_quant_tasks(quant_strategist, algo_dev, risk_auditor, request, previous_result=None):
     # Nếu là cycle retry, đính kèm kết quả cũ để agents không lặp lại sai lầm
@@ -12,10 +14,13 @@ def create_quant_tasks(quant_strategist, algo_dev, risk_auditor, request, previo
             f"và tập trung vào điểm chưa giải quyết.\n"
         )
 
+    ws = WORKSPACE_ROOT  # shorthand
+
     t1 = Task(
         description=(
             f"Nhiệm vụ: {request}.{retry_context}\n"
-            "Hãy đọc code trong thư mục ml/ để tìm lỗi logic. "
+            f"Workspace: {ws}\n"
+            f"Hãy dùng 'List Directory' với argument 'ml' để xem code trong {ws}/ml/. "
             "Nếu thư mục ml/ chưa có file nào, hãy phân tích lý thuyết về các nguyên nhân "
             "phổ biến khiến win rate dừng ở 60% trong chiến thuật momentum VN-index.\n"
             "Đưa ra TỐI THIỂU 3 giả thuyết cụ thể có thể kiểm chứng được."
@@ -27,12 +32,13 @@ def create_quant_tasks(quant_strategist, algo_dev, risk_auditor, request, previo
             "2. Đề xuất cụ thể cho từng nguyên nhân (bộ lọc, tham số, logic).\n"
             "3. Thứ tự ưu tiên implement."
         ),
-        output_file="reports/t1_analysis.md",
+        output_file=str(ws / "reports" / "t1_analysis.md"),
     )
 
     t2 = Task(
         description=(
-            "Dựa trên phân tích của t1, hãy viết file ml/optimized_strategy.py.\n"
+            f"Dựa trên phân tích của t1, hãy viết file tại {ws}/ml/optimized_strategy.py.\n"
+            "Khi gọi 'Write File', dùng file_path = 'ml/optimized_strategy.py' (relative to workspace).\n"
             "Yêu cầu bắt buộc:\n"
             "- Thêm Regime Detection (trending vs ranging) dựa trên ADX hoặc slope của EMA200.\n"
             "- Tối ưu tham số RSI/EMA với logic rõ ràng.\n"
@@ -43,22 +49,24 @@ def create_quant_tasks(quant_strategist, algo_dev, risk_auditor, request, previo
         agent=algo_dev,
         context=[t1],
         expected_output=(
-            "File ml/optimized_strategy.py sạch sẽ, có thể import và chạy được, "
+            f"File {ws}/ml/optimized_strategy.py sạch sẽ, có thể import và chạy được, "
             "với hàm run_backtest() trả về dict có key 'win_rate'."
         ),
-        output_file="reports/t2_code_summary.md",
+        output_file=str(ws / "reports" / "t2_code_summary.md"),
     )
 
     t3 = Task(
         description=(
-            "Sử dụng CodeInterpreterTool để thực thi ml/optimized_strategy.py.\n"
-            "Nếu thư mục data/ chưa có dữ liệu thật, hãy tự sinh dữ liệu giả "
+            "Sử dụng CodeInterpreterTool để thực thi optimized_strategy.py.\n"
+            f"Đường dẫn tuyệt đối của file: {ws}/ml/optimized_strategy.py\n"
+            "Trong code chạy, hãy dùng đường dẫn tuyệt đối này khi import/exec file.\n"
+            f"Nếu thư mục {ws}/data/ chưa có dữ liệu thật, hãy tự sinh dữ liệu giả "
             "(VD: random walk với drift nhỏ, 500 điểm) để chạy backtest.\n"
             "Yêu cầu:\n"
             "1. Chạy hàm run_backtest() và thu thập win_rate.\n"
             "2. Nếu win_rate < 65.0: liệt kê chính xác các bộ lọc/tham số cần điều chỉnh "
-            "   và ghi vào reports/fix_instructions.md để cycle tiếp theo dùng.\n"
-            "3. Nếu win_rate >= 65.0: ghi báo cáo thành công vào reports/final_report.md.\n"
+            "   và ghi vào 'reports/fix_instructions.md' để cycle tiếp theo dùng.\n"
+            "3. Nếu win_rate >= 65.0: ghi báo cáo thành công vào 'reports/final_report.md'.\n"
             "Luôn in ra dòng 'Win Rate: XX.X%' trong output."
         ),
         agent=risk_auditor,
@@ -69,7 +77,7 @@ def create_quant_tasks(quant_strategist, algo_dev, risk_auditor, request, previo
             "- Nếu < 65%: danh sách fix cụ thể đã ghi vào reports/fix_instructions.md.\n"
             "- Nếu >= 65%: tuyên bố thành công và path của final_report.md."
         ),
-        output_file="reports/t3_backtest_result.md",
+        output_file=str(ws / "reports" / "t3_backtest_result.md"),
     )
 
     return [t1, t2, t3]

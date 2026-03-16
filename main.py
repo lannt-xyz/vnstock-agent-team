@@ -5,13 +5,13 @@ from crewai import Crew, Process
 
 load_dotenv()
 
-# Dùng key thật để CrewAI không fallback sang dummy
-os.environ["GOOGLE_API_KEY"] = os.getenv("GEMINI_KEY_1", "")
+# Import WORKSPACE_ROOT trước để tạo thư mục đúng chỗ
+from tools import WORKSPACE_ROOT  # noqa: E402
 
-# Tạo các thư mục cần thiết trước khi import agents (DirectoryReadTool cần thư mục tồn tại)
-os.makedirs("ml", exist_ok=True)
-os.makedirs("data", exist_ok=True)
-os.makedirs("reports", exist_ok=True)
+# Tạo các thư mục workspace cần thiết (có thể nằm ngoài project này)
+(WORKSPACE_ROOT / "ml").mkdir(parents=True, exist_ok=True)
+(WORKSPACE_ROOT / "data").mkdir(parents=True, exist_ok=True)
+(WORKSPACE_ROOT / "reports").mkdir(parents=True, exist_ok=True)
 
 from agents import quant_strategist, algo_dev, risk_auditor  # noqa: E402
 from tasks import create_quant_tasks  # noqa: E402

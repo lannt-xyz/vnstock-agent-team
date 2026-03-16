@@ -1,21 +1,19 @@
 from crewai import Agent
-from crewai_tools import CodeInterpreterTool, DirectoryReadTool, FileReadTool, FileWriterTool
 
+from tools import WORKSPACE_ROOT, code_interpreter, safe_dir_read, safe_file_read, safe_file_write
 from utils import llm_factory
-
-# Scope tools vào các thư mục cụ thể — tránh agents đọc .env / source code
-ml_dir_tool   = DirectoryReadTool(directory='./ml')
-data_dir_tool = DirectoryReadTool(directory='./data')
-file_read     = FileReadTool()
-file_write    = FileWriterTool()
-code_tool     = CodeInterpreterTool()
 
 quant_strategist = Agent(
     role='Lead Quant Strategist',
     goal='Phân tích logic tài chính và tìm điểm mù của chiến thuật',
-    backstory='Bạn là bộ não của team, chuyên xử lý những vấn đề trừu tượng và khó.',
+    backstory=(
+        f'Bạn là bộ não của team, chuyên xử lý những vấn đề trừu tượng và khó. '
+        f'Workspace làm việc: {WORKSPACE_ROOT}. '
+        'Khi đọc thư mục, hãy dùng đường dẫn tương đối so với workspace (ví dụ: "ml", "data"). '
+        'TUYỆT ĐỐI không đọc file .env, __pycache__, venv hoặc bất kỳ file ngoài workspace.'
+    ),
     llm=llm_factory.get_pro_model(),
-    tools=[ml_dir_tool, data_dir_tool, file_read],
+    tools=[safe_dir_read, safe_file_read],
     verbose=True,
     allow_delegation=True,
     max_iter=8,
@@ -25,9 +23,14 @@ quant_strategist = Agent(
 algo_dev = Agent(
     role='Algorithmic Engineer',
     goal='Viết code Python và thực hiện các bộ lọc theo yêu cầu',
-    backstory='Bạn là một cỗ máy viết code thuần thục và nhanh chóng.',
+    backstory=(
+        f'Bạn là một cỗ máy viết code thuần thục và nhanh chóng. '
+        f'Workspace làm việc: {WORKSPACE_ROOT}. '
+        'Khi ghi file, dùng đường dẫn tương đối (ví dụ: "ml/strategy.py"). '
+        'TUYỆT ĐỐI không ghi đè file .env hay file ngoài workspace.'
+    ),
     llm=llm_factory.get_flash_model(),
-    tools=[ml_dir_tool, file_read, file_write],
+    tools=[safe_dir_read, safe_file_read, safe_file_write],
     verbose=True,
     max_iter=10,
 )
@@ -36,9 +39,14 @@ algo_dev = Agent(
 risk_auditor = Agent(
     role='Risk & Performance Auditor',
     goal='Thực thi backtest và báo cáo số liệu',
-    backstory='Bạn tập trung vào các con số và kết quả thực thi lệnh.',
+    backstory=(
+        f'Bạn tập trung vào các con số và kết quả thực thi lệnh. '
+        f'Workspace làm việc: {WORKSPACE_ROOT}. '
+        'Khi chạy code bằng CodeInterpreter, hãy dùng đường dẫn tuyệt đối '
+        f'(bắt đầu bằng {WORKSPACE_ROOT}) để tránh lỗi file not found.'
+    ),
     llm=llm_factory.get_flash_model(),
-    tools=[code_tool, data_dir_tool, ml_dir_tool, file_read, file_write],
+    tools=[code_interpreter, safe_dir_read, safe_file_read, safe_file_write],
     verbose=True,
     max_iter=8,
 )
