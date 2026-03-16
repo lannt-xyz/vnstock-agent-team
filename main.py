@@ -2,6 +2,7 @@ import os
 import re
 from dotenv import load_dotenv
 from crewai import Crew, Process
+from crewai.memory.unified_memory import Memory
 
 load_dotenv()
 
@@ -48,13 +49,19 @@ if __name__ == "__main__":
             previous_result=last_result,
         )
 
+        embedder_fn = llm_factory.make_embedder()
+        crew_memory = Memory(
+            llm=llm_factory.get_flash_model(),
+            embedder=embedder_fn,
+        )
+
         quant_crew = Crew(
             agents=[quant_strategist, algo_dev, risk_auditor],
             tasks=tasks,
             process=Process.hierarchical,
             manager_llm=llm_factory.get_pro_model(),
             verbose=True,
-            memory=True,
+            memory=crew_memory,
         )
 
         result = quant_crew.kickoff()

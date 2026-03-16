@@ -1,6 +1,8 @@
 import os
 from dotenv import load_dotenv
 from crewai import LLM
+from google import genai
+from google.genai import types as genai_types
 
 load_dotenv()
 
@@ -22,7 +24,7 @@ class LLMFactory:
     def get_pro_model(self):
         """Dùng cho tư duy chiến lược, phân tích dữ liệu phức tạp"""
         return LLM(
-            model="gemini/gemini-2.5-pro",
+            model="gemini/gemini-2.5-flash",
             api_key=self._get_next_key(),
             temperature=0.2
         )
@@ -34,5 +36,26 @@ class LLMFactory:
             api_key=self._get_next_key(),
             temperature=0.1
         )
+
+    def make_embedder(self):
+        """Trả về callable embedder dùng google.genai SDK mới (không dùng google.generativeai cũ).
+        Signature: (texts: list[str]) -> list[list[float]]
+        Dùng text-embedding-004, task_type RETRIEVAL_DOCUMENT.
+        """
+        api_key = self.keys[0]
+
+        def _embed(texts: list[str]) -> list[list[float]]:
+            client = genai.Client(api_key=api_key)
+            result = client.models.embed_content(
+                model="text-embedding-004",
+                contents=texts,
+                config=genai_types.EmbedContentConfig(
+                    task_type="RETRIEVAL_DOCUMENT",
+                    output_dimensionality=768,
+                ),
+            )
+            return [e.values for e in result.embeddings]
+
+        return _embed
 
 llm_factory = LLMFactory()
