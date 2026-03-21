@@ -22,13 +22,18 @@ def create_agents():
         backstory=(
             "Một quản lý dự án lão luyện, cực kỳ giỏi việc nắm bắt ý đồ mơ hồ của khách hàng "
             "và biến nó thành tài liệu kỹ thuật chuẩn chỉnh. Luôn ưu tiên sự rõ ràng và thời hạn "
-            "hoàn thành. Không bao giờ chấp nhận sự mơ hồ."
+            "hoàn thành. Không bao giờ chấp nhận sự mơ hồ. "
+            "QUY TẮc BẮt BUỘC: Luôn dùng tool Write File để lưu mọi file báo cáo. "
+            "Tuyệt đối không nhả nội dung file vào chat."
         ),
         llm=llm_factory.get_local_model(),
         tools=[safe_file_write, safe_file_read],
         verbose=True,
-        allow_delegation=True,
-        max_iter=8,
+        allow_delegation=False,
+        memory=False,
+        max_iter=10,
+        max_rpm=8,
+
     )
 
     plan_reviewer = Agent(
@@ -47,7 +52,9 @@ def create_agents():
         tools=[safe_file_read],
         verbose=True,
         allow_delegation=False,
+        memory=False,
         max_iter=5,
+        max_rpm=8,
     )
 
     architect = Agent(
@@ -66,7 +73,9 @@ def create_agents():
         tools=[safe_dir_read, safe_file_read],
         verbose=True,
         allow_delegation=False,
+        memory=False,
         max_iter=8,
+        max_rpm=8,
     )
 
     coder = Agent(
@@ -79,13 +88,19 @@ def create_agents():
             f"Một lập trình viên Fullstack thiện chiến. Workspace làm việc: {WORKSPACE_ROOT}. "
             "Viết code nhanh, gọn và tuân thủ chặt chẽ các quy tắc của ngôn ngữ. "
             "Luôn tự giác viết kèm chú thích (comment) nhưng đôi khi hơi chủ quan về edge cases. "
-            "KHÔNG dùng markdown code fence khi ghi file — chỉ viết nội dung Python thuần."
+            "KHÔNG dùng markdown code fence khi ghi file — chỉ viết nội dung thuần. "
+            "QUY TẮc BẮt BUỘC: Luôn dùng tool Write File để lưu mọi file code. "
+            "Tuyệt đối không nhả nội dung file vào chat. "
+            "Nếu thử sửa một lỗi quá 3 lần không thành công, hãy dừng lại và báo cáo vấn đề cụ thể "
+            "thay vì tiếp tục thử lại vô ích."
         ),
         llm=llm_factory.get_local_model(),
         tools=[safe_file_write, safe_file_read, code_interpreter],
         verbose=True,
         allow_delegation=False,
-        max_iter=12,
+        memory=False,
+        max_iter=20,
+        max_rpm=8,
     )
 
     qc = Agent(
@@ -104,7 +119,9 @@ def create_agents():
         tools=[code_interpreter, safe_file_write, safe_file_read],
         verbose=True,
         allow_delegation=False,
+        memory=False,
         max_iter=8,
+        max_rpm=8,
     )
 
     reviewer = Agent(
@@ -122,7 +139,9 @@ def create_agents():
         tools=[safe_file_read, safe_dir_read],
         verbose=True,
         allow_delegation=False,
+        memory=False,
         max_iter=5,
+        max_rpm=8,
     )
 
     return pm, plan_reviewer, architect, coder, qc, reviewer

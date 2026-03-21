@@ -38,7 +38,6 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             "Tài liệu kế hoạch gồm: danh sách User Stories, tiêu chí hoàn thành, "
             "và rủi ro tiềm ẩn được ghi vào 'reports/t1_task_plan.md'."
         ),
-        output_file=str(ws / "reports" / "t1_task_plan.md"),
     )
 
     t2 = Task(
@@ -59,7 +58,6 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             "Báo cáo review plan gồm: nhận xét từng User Story, danh sách điểm cần sửa (nếu có), "
             "và kết luận APPROVED hoặc REQUEST CHANGES kèm lý do."
         ),
-        output_file=str(ws / "reports" / "t2_plan_review.md"),
     )
 
     t3 = Task(
@@ -82,7 +80,6 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             "Tài liệu kiến trúc gồm: danh sách file cần thay đổi, design pattern được chọn, "
             "phân tích side effects, và data flow."
         ),
-        output_file=str(ws / "reports" / "t3_architecture.md"),
     )
 
     t4 = Task(
@@ -111,7 +108,6 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             "File 'reports/t4_code_summary.md' liệt kê đường dẫn và mô tả ngắn của từng file đã tạo."
             "Phải tạo file hướng dẫn sử dụng và triển khai nếu Architect yêu cầu. Code phải sạch, có comment giải thích, "
         ),
-        output_file=str(ws / "reports" / "t4_code_summary.md"),
     )
 
     t5 = Task(
@@ -133,7 +129,6 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             "Báo cáo QC gồm: kết quả pytest (số pass/fail), "
             "danh sách bug tìm được (nếu có), và xác nhận 100% pass cuối cùng."
         ),
-        output_file=str(ws / "reports" / "t5_qc_report.md"),
     )
 
     t6 = Task(
@@ -153,7 +148,6 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             "Báo cáo review gồm: danh sách vấn đề style/clean code/security (nếu có), "
             "và kết luận: APPROVED hoặc REQUEST CHANGES."
         ),
-        output_file=str(ws / "reports" / "t6_review.md"),
     )
 
     t7 = Task(
@@ -175,7 +169,6 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             "Báo cáo tóm tắt cuối cùng, ngắn gọn, rõ ràng: "
             "việc đã xong, số file thay đổi, kết quả test, chất lượng code."
         ),
-        output_file=str(ws / "reports" / "t7_final_report.md"),
     )
 
     return [t1, t2, t3, t4, t5, t6, t7]

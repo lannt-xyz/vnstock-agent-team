@@ -206,8 +206,10 @@ class SafeFileWriterTool(BaseTool):
         if target.exists() and not overwrite:
             return f"[SKIPPED] File already exists: {target}"
         target.parent.mkdir(parents=True, exist_ok=True)
+        print(f"[TOOL] Writing {len(content)} bytes to {target}...")
         target.write_text(content, encoding="utf-8")
-        return f"[OK] Written {len(content)} chars to {target}"
+        rel = target.relative_to(WORKSPACE_ROOT).as_posix()
+        return f"SUCCESS: {rel}"
 
 
 # ── Tool: Final Analysis (compatibility) ─────────────────────────────────────

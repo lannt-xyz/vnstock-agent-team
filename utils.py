@@ -66,6 +66,7 @@ class LLMFactory:
             model="ollama/deepseek-coder-v2:16b-lite-instruct-q4_K_M",
             base_url="http://localhost:11434",
             temperature=0.2,
+            timeout=300,
             extra_body={"options": {"num_ctx": 16000}},
         )
 
