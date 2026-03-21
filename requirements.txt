@@ -27,6 +27,7 @@ docker==7.1.0
 docstring_parser==0.17.0
 durationpy==0.10
 et_xmlfile==2.0.0
+fastuuid==0.14.0
 filelock==3.25.2
 filetype==1.2.0
 flatbuffers==25.12.19
@@ -71,6 +72,7 @@ langchain-core==1.2.19
 langchain-google-genai==4.2.1
 langsmith==0.7.17
 linkify-it-py==2.1.0
+litellm==1.82.2
 lxml==6.0.2
 markdown-it-py==4.0.0
 MarkupSafe==3.0.3

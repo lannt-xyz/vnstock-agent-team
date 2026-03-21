@@ -19,7 +19,7 @@ from typing import Type
 from crewai.tools import BaseTool
 from crewai_tools import CodeInterpreterTool
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 load_dotenv()
 
@@ -210,8 +210,48 @@ class SafeFileWriterTool(BaseTool):
         return f"[OK] Written {len(content)} chars to {target}"
 
 
+# ── Tool: Final Analysis (compatibility) ─────────────────────────────────────
+
+class _FinalAnalysisInput(BaseModel):
+    """Accept flexible payloads from LLM function-calls.
+
+    Some models may attempt to call a `final_analysis` tool even when it wasn't
+    provided. This schema allows arbitrary keys and optional known fields so the
+    call succeeds and returns a concise normalized summary.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    reasons_for_low_win_rate: str | None = Field(default=None)
+    proposed_improvements: str | None = Field(default=None)
+    validation_plan: str | None = Field(default=None)
+
+
+class FinalAnalysisTool(BaseTool):
+    name: str = "final_analysis"
+    description: str = (
+        "Compatibility analysis tool. Accepts a free-form analysis payload and "
+        "returns a normalized markdown summary so agent workflows don't fail "
+        "when they invoke 'final_analysis'."
+    )
+    args_schema: Type[BaseModel] = _FinalAnalysisInput
+
+    def _run(self, **kwargs) -> str:
+        reasons = kwargs.get("reasons_for_low_win_rate") or "(not provided)"
+        improvements = kwargs.get("proposed_improvements") or "(not provided)"
+        validation = kwargs.get("validation_plan") or "(not provided)"
+
+        return (
+            "# Final Analysis\n\n"
+            f"## Reasons For Low Win Rate\n{reasons}\n\n"
+            f"## Proposed Improvements\n{improvements}\n\n"
+            f"## Validation Plan\n{validation}\n"
+        )
+
+
 # ── Shared tool instances (imported by agents.py) ────────────────────────────
 safe_file_read   = SafeFileReadTool()
 safe_dir_read    = SafeDirectoryReadTool()
 safe_file_write  = SafeFileWriterTool()
 code_interpreter = CodeInterpreterTool()
+final_analysis   = FinalAnalysisTool()

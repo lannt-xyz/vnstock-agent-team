@@ -1,4 +1,3 @@
-import os
 import re
 import json
 from datetime import datetime, timezone
@@ -8,32 +7,33 @@ from crewai import Crew, Process
 load_dotenv()
 
 # Import WORKSPACE_ROOT trước để tạo thư mục đúng chỗ
-from tools import WORKSPACE_ROOT  # noqa: E402
+from tools import WORKSPACE_ROOT, safe_file_write  # noqa: E402
 
 # Tạo các thư mục workspace cần thiết (có thể nằm ngoài project này)
-(WORKSPACE_ROOT / "ml").mkdir(parents=True, exist_ok=True)
-(WORKSPACE_ROOT / "data").mkdir(parents=True, exist_ok=True)
+(WORKSPACE_ROOT / "src").mkdir(parents=True, exist_ok=True)
 (WORKSPACE_ROOT / "reports").mkdir(parents=True, exist_ok=True)
 
 from agents import create_agents  # noqa: E402
-from tasks import create_quant_tasks  # noqa: E402
-from utils import llm_factory  # noqa: E402
-
-USER_REQUEST = (
-    "Tối ưu mô hình trade chứng khoán VN. "
-    "Hãy tìm cách tăng win rate từ 60% lên 65% "
-    "bằng cách thêm bộ lọc xu hướng và quản lý vốn."
-)
-WIN_RATE_TARGET = 65.0
-MAX_CYCLES = 3
-
-STATE_FILE   = WORKSPACE_ROOT / "state.json"       # lưu kết quả cycle cuối cùng
-HISTORY_LOG  = WORKSPACE_ROOT / "crew_history.log" # human-readable log
+from tasks import create_dev_team_tasks  # noqa: E402
 
 
-def _parse_win_rate(text: str) -> float | None:
-    matches = re.findall(r'win[\s_-]?rate[:\s=]+(\d+(?:\.\d+)?)\s*%', text, re.IGNORECASE)
-    return max(float(m) for m in matches) if matches else None
+USER_REQUEST = """
+Tạo trang web đọc google sheets để tạo bài kiểm tra từ vựng cho học sinh.
+Yêu cầu: 
+1) Giao diện đơn giản, responsive,
+2) Tự động lấy dữ liệu từ google sheets, yêu cầu người dùng link sheet và chọn sheet cần lấy dữ liệu, sau đó hiển thị câu hỏi trắc nghiệm dựa trên dữ liệu đó.
+3) Lưu kết quả làm bài của học sinh vào 1 sheet trên cùng file
+4) Hướng dẫn chi tiết cách triển khai trên server (nếu cần).
+Yêu cầu về kết quả:
+- Code sạch, có comment giải thích,
+- Cấu trúc thư mục rõ ràng,
+- Có tài liệu hướng dẫn sử dụng và triển khai.
+"""
+
+MAX_CYCLES = 1
+
+STATE_FILE   = WORKSPACE_ROOT / "state.json"
+HISTORY_LOG  = WORKSPACE_ROOT / "crew_history.log"
 
 
 def _log(msg: str) -> None:
@@ -54,87 +54,85 @@ def _load_state() -> dict:
     return {}
 
 
-def _save_state(state: dict) -> None:
-    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+def _flush_write_calls(text: str) -> None:
+    """Extract tất cả Write File JSON calls trong một đoạn text và thực thi hết.
+    Hỗ trợ cả 3 format mà local model hay output:
+      - ```json {...} ```  (markdown fenced block)
+      - {...}              (bare JSON object inline)
+      - Action Input: {...}
+    """
+    # Gom tất cả JSON object candidates (fenced hoặc bare)
+    candidates: list[str] = []
+
+    # 1. Fenced code blocks
+    candidates += re.findall(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+
+    # 2. "Action Input: {...}"
+    candidates += re.findall(r'Action Input:\s*(\{.*?\})', text, re.DOTALL)
+
+    # 3. Bare top-level JSON objects (fallback: tìm { ... } lớn nhất có file_path)
+    for m in re.finditer(r'\{[^{}]*"file_path"[^{}]*\}', text, re.DOTALL):
+        candidates.append(m.group(0))
+
+    executed = set()
+    for raw in candidates:
+        raw = raw.strip()
+        if raw in executed:
+            continue
+        try:
+            data = json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        if "file_path" in data and "content" in data:
+            fp = data["file_path"].strip()
+            # Normalize: bỏ absolute path prefix nếu model quên dấu / đầu
+            # VD: "home/lanntxyz/.../workspace/reports/x.md" → "reports/x.md"
+            ws_str = str(WORKSPACE_ROOT)
+            for prefix in (ws_str.lstrip("/"), ws_str):
+                if fp.startswith(prefix):
+                    fp = fp[len(prefix):].lstrip("/")
+                    break
+            # Bỏ tiền tố "workspace/" nếu model vẫn thêm vào
+            if fp.startswith("workspace/"):
+                fp = fp[len("workspace/"):]
+            result = safe_file_write._run(
+                file_path=fp,
+                content=data["content"],
+                overwrite=data.get("overwrite", True),
+            )
+            print(f"\n[auto-tool] Write File → {result}\n")
+            executed.add(raw)
+
+
+def _task_callback(task_output) -> None:
+    """Chạy sau khi mỗi task hoàn thành."""
+    _flush_write_calls(str(task_output))
+
+
+def _step_callback(step_output) -> None:
+    """Chạy sau mỗi bước của agent — bắt cả intermediate Write File calls."""
+    _flush_write_calls(str(step_output))
 
 
 if __name__ == "__main__":
+    pm, plan_reviewer, architect, coder, qc, reviewer = create_agents()
     state = _load_state()
-    last_result: str | None = state.get("last_result")
-    last_win_rate: float | None = state.get("last_win_rate")
+    tasks = create_dev_team_tasks(
+        pm, plan_reviewer, architect, coder, qc, reviewer,
+        USER_REQUEST,
+        previous_result=state.get("last_result"),
+    )
 
-    _log("=" * 50)
-    if last_result:
-        _log(f"SESSION RESUME — last win rate: {last_win_rate or '?'}%")
-    else:
-        _log("SESSION START (no previous state)")
-    _log(f"Target: {WIN_RATE_TARGET}%")
-
-    for cycle in range(1, MAX_CYCLES + 1):
-        print(f"\n{'='*55}")
-        print(f"  QUANT TEAM — CYCLE {cycle}/{MAX_CYCLES}")
-        print(f"{'='*55}")
-        _log(f"Cycle {cycle}/{MAX_CYCLES} started")
-
-        # Tạo agents mới mỗi cycle → key rotation (mỗi get_pro/flash_model() lấy key tiếp theo)
-        quant_strategist, algo_dev, risk_auditor = create_agents()
-
-        tasks = create_quant_tasks(
-            quant_strategist, algo_dev, risk_auditor,
-            USER_REQUEST,
-            previous_result=last_result,
-        )
-
-        # Retry với key tiếp theo nếu gặp 429 trong cycle này
-        retry_attempts = len(llm_factory.keys)
-        result = None
-        for attempt in range(retry_attempts):
-            try:
-                quant_crew = Crew(
-                    agents=[quant_strategist, algo_dev, risk_auditor],
-                    tasks=tasks,
-                    process=Process.hierarchical,
-                    manager_llm=llm_factory.get_pro_model(),
-                    verbose=True,
-                )
-                result = quant_crew.kickoff()
-                break  # thành công
-            except Exception as e:
-                err = str(e)
-                if '429' in err or 'RESOURCE_EXHAUSTED' in err or 'quota' in err.lower():
-                    if attempt < retry_attempts - 1:
-                        _log(f"429 on attempt {attempt + 1} — rotating to next key...")
-                        # Tạo lại agents với key mới
-                        quant_strategist, algo_dev, risk_auditor = create_agents()
-                        tasks = create_quant_tasks(
-                            quant_strategist, algo_dev, risk_auditor,
-                            USER_REQUEST,
-                            previous_result=last_result,
-                        )
-                    else:
-                        _log(f"All keys exhausted on cycle {cycle}. Saving state and stopping.")
-                        raise
-                else:
-                    raise
-
-        last_result = str(result)
-
-        win_rate = _parse_win_rate(last_result)
-        _save_state({"last_result": last_result, "last_win_rate": win_rate})
-
-        if win_rate is not None:
-            _log(f"Cycle {cycle} — Win rate: {win_rate:.1f}%")
-            if win_rate >= WIN_RATE_TARGET:
-                _log(f"TARGET REACHED ({win_rate:.1f}% >= {WIN_RATE_TARGET}%). Stopping.")
-                break
-            else:
-                _log(f"Not reached yet. Continuing to cycle {cycle + 1}...")
-        else:
-            _log(f"Cycle {cycle} — Could not parse win rate from output.")
-
-    _log("SESSION END")
-    print("\n--- FINAL STRATEGY REPORT ---\n")
-    print(last_result)
-
-    print("\n--- FINAL STRATEGY REPORT ---\n")
-    print(last_result)
+    crew = Crew(
+        agents=[pm, plan_reviewer, architect, coder, qc, reviewer],
+        tasks=tasks,
+        process=Process.sequential,
+        task_callback=_task_callback,
+        step_callback=_step_callback,
+        verbose=True,
+    )
+    result = crew.kickoff()
+    print("\n--- FINAL WORKFLOW REPORT ---\n")
+    print(result)
