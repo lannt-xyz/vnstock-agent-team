@@ -66,8 +66,12 @@ class LLMFactory:
             model="ollama/deepseek-coder-v2:16b-lite-instruct-q4_K_M",
             base_url="http://localhost:11434",
             temperature=0.2,
-            timeout=300,
-            extra_body={"options": {"num_ctx": 16000}},
+            timeout=900,
+            extra_body={
+                "num_ctx": 16000,
+                "num_gpu": 99,
+                "num_thread": 8
+            },
         )
 
     def get_flash_model(self, is_pro=False):

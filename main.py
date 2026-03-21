@@ -1,5 +1,6 @@
 import re
 import json
+import traceback
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from crewai import Crew, Process
@@ -115,7 +116,11 @@ def _run_t1_t2_with_guard(
             process=Process.sequential,
             verbose=True,
         )
-        mini_crew.kickoff()
+        try:
+            mini_crew.kickoff()
+        except Exception as exc:
+            _log(f"[t2 Guard] mini_crew lỗi: {exc} — bỏ qua guard, tiếp tục")
+            break
 
         # Đọc kết quả t2
         t2_report_path = WORKSPACE_ROOT / "reports" / "t2_plan_review.md"
@@ -178,11 +183,16 @@ if __name__ == "__main__":
             process=Process.sequential,
             verbose=True,
         )
-        result = crew.kickoff()
-        last_result = str(result)
-
-        _save_state({"cycle": cycle, "last_result": last_result})
-        _log(f"=== CYCLE {cycle} DONE ===")
+        try:
+            result = crew.kickoff()
+            last_result = str(result)
+            _save_state({"cycle": cycle, "last_result": last_result})
+            _log(f"=== CYCLE {cycle} DONE ===")
+        except Exception as exc:
+            _log(f"=== CYCLE {cycle} FAILED: {exc} ===")
+            traceback.print_exc()
+            _save_state({"cycle": cycle, "last_result": last_result or "", "error": str(exc)})
+            _log("State đã được lưu. Chạy lại để vào cycle tiếp theo.")
 
     print("\n--- FINAL WORKFLOW REPORT ---\n")
     print(last_result)
