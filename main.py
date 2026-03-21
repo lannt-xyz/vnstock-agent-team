@@ -1,3 +1,4 @@
+import re
 import json
 from datetime import datetime, timezone
 from dotenv import load_dotenv
@@ -31,6 +32,8 @@ Yêu cầu về kết quả:
 
 MAX_CYCLES = 1
 
+IS_FRONTEND = bool(re.search(r'html|css|javascript|\bjs\b|frontend|google sheets api', USER_REQUEST, re.I))
+
 STATE_FILE   = WORKSPACE_ROOT / "state.json"
 HISTORY_LOG  = WORKSPACE_ROOT / "crew_history.log"
 
@@ -60,6 +63,7 @@ if __name__ == "__main__":
         pm, plan_reviewer, architect, coder, qc, reviewer,
         USER_REQUEST,
         previous_result=state.get("last_result"),
+        is_frontend=IS_FRONTEND,
     )
 
     crew = Crew(

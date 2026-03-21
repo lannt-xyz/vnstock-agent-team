@@ -2,9 +2,17 @@ from crewai import Task
 
 from tools import WORKSPACE_ROOT
 
+# ── Path rule — inject once (t1 only) ─────────────────────────────────────────
+_PATH_NOTE = (
+    "QUY TẮc ĐƯỜNG DẪN (dùng cho mọi lần gọi Write File):\n"
+    "  ĐÚNG: file_path='reports/t1_task_plan.md'\n"
+    "  SAI:  file_path='workspace/reports/t1_task_plan.md'\n"
+    "Không thêm tiền tố 'workspace/' vào đường dẫn.\n"
+)
+
 
 # ── Dev Team Workflow ──────────────────────────────────────────────────────────
-def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, request, previous_result=None):
+def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, request, previous_result=None, is_frontend=False):
     """6-agent dev team pipeline:
       t1 PM            → phân tích yêu cầu, lên kế hoạch task
       t2 Plan Reviewer → review & phê duyệt kế hoạch của PM (pro model)
@@ -26,148 +34,137 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
 
     t1 = Task(
         description=(
-            f"Yêu cầu từ User: {request}.{retry_context}\n\n"
-            "Phân tích yêu cầu, chia nhỏ thành danh sách User Stories / Task kỹ thuật rõ ràng. "
-            "Xác định: phạm vi, tiêu chí hoàn thành (Done Criteria), và rủi ro tiềm ẩn. "
-            "Ghi kế hoạch vào 'reports/t1_task_plan.md'."
-            "LƯU Ý VỀ ĐƯỜNG DẪN: Khi gọi Write File, KHÔNG thêm 'workspace/' vào trước đường dẫn. "
-            "Ví dụ đúng: file_path='reports/t1_task_plan.md'. Ví dụ SAI: file_path='workspace/reports/t1_task_plan.md'."
+            f"Yêu cầu từ User:\n{request}{retry_context}\n"
+            f"{_PATH_NOTE}\n"
+            "Nhiệm vụ:\n"
+            "1. Phân tích yêu cầu, liệt kê cụ thể các User Stories.\n"
+            "2. Xác định phạm vi và Done Criteria đo lường được.\n"
+            "3. Liệt kê rủi ro tiềm ẩn.\n"
+            "4. Ghi kế hoạch vào 'reports/t1_task_plan.md' bằng Write File."
         ),
         agent=pm,
         expected_output=(
-            "Tài liệu kế hoạch gồm: danh sách User Stories, tiêu chí hoàn thành, "
-            "và rủi ro tiềm ẩn được ghi vào 'reports/t1_task_plan.md'."
+            "File 'reports/t1_task_plan.md' chứa: User Stories, Done Criteria, rủi ro."
         ),
     )
 
     t2 = Task(
         description=(
-            "Đọc kế hoạch của PM tại 'reports/t1_task_plan.md' và đánh giá nghiêm túc:\n"
-            "1. Các User Stories có đủ rõ ràng và khả thi về mặt kỹ thuật không?\n"
-            "2. Có Task nào bị thiếu, dư thừa, hoặc mâu thuẫn nhau không?\n"
+            "Dùng Read File đọc 'reports/t1_task_plan.md', đánh giá:\n"
+            "1. User Stories có rõ ràng, khả thi kỹ thuật không?\n"
+            "2. Có Task thiếu, dư, hoặc mâu thuẫn không?\n"
             "3. Done Criteria có đo lường được không?\n"
-            "4. Rủi ro kỹ thuật nào chưa được PM nhận ra?\n"
-            "Nếu plan cần sửa: liệt kê cụ thể điểm cần PM điều chỉnh.\n"
-            "Nếu plan ổn: xác nhận APPROVED và giải thích lý do.\n"
-            "Ghi nhận xét vào 'reports/t2_plan_review.md'."
-            "LƯU Ý: file_path KHÔNG được có tiền tố 'workspace/'."
+            "4. Rủi ro kỹ thuật nào PM chưa nhận ra?\n"
+            "Kết luận: APPROVED hoặc REQUEST CHANGES (kèm danh sách điểm cần sửa).\n"
+            "Ghi nhận xét vào 'reports/t2_plan_review.md' bằng Write File."
         ),
         agent=plan_reviewer,
         context=[t1],
         expected_output=(
-            "Báo cáo review plan gồm: nhận xét từng User Story, danh sách điểm cần sửa (nếu có), "
-            "và kết luận APPROVED hoặc REQUEST CHANGES kèm lý do."
+            "File 'reports/t2_plan_review.md' ghi kết luận APPROVED hoặc REQUEST CHANGES kèm lý do."
         ),
     )
 
     t3 = Task(
         description=(
-            "Dựa trên kế hoạch đã được review, thiết kế giải pháp kỹ thuật:\n"
-            "QUAN TRỌNG: Technology stack phải xuất phát TRỰC TIẾP từ yêu cầu ở t1/t2. "
-            "KHÔNG tự ý chọn framework (Flask, Django, SQLAlchemy...) nếu yêu cầu không đề cập.\n"
-            "Ví dụ: nếu yêu cầu là web app đọc Google Sheets → tech stack là HTML+JS+Google Sheets API, không phải Flask.\n\n"
-            "1. Đọc kỹ lại yêu cầu trong 'reports/t1_task_plan.md' và 'reports/t2_plan_review.md'.\n"
-            "2. Xác định technology stack phù hợp với yêu cầu thực tế (front-end, back-end, third-party API...).\n"
-            "3. Liệt kê TẤT CẢ file cần tạo với đường dẫn và mô tả nội dung cụ thể.\n"
-            "4. Chọn Design Pattern phù hợp, giải thích tại sao.\n"
-            "5. Mô tả data flow giữa các module.\n"
-            "Ghi tài liệu vào 'reports/t3_architecture.md'.\n"
-            "LƯU Ý: file_path KHÔNG được có tiền tố 'workspace/'."
+            "Dùng Read File đọc 'reports/t1_task_plan.md' và 'reports/t2_plan_review.md', thiết kế kiến trúc:\n"
+            "1. Tech stack phải xuất phát TRỰC TIẾP từ yêu cầu — không tự ý thêm framework.\n"
+            "   Ví dụ: web app đọc Google Sheets → HTML+JS+Google Sheets API, KHÔNG Flask.\n"
+            "2. Liệt kê TẤT CẢ file cần tạo: đường dẫn 'src/...' và mô tả nội dung.\n"
+            "3. Chọn Design Pattern, giải thích lý do.\n"
+            "4. Mô tả data flow giữa các module.\n"
+            "Ghi tài liệu vào 'reports/t3_architecture.md' bằng Write File."
         ),
         agent=architect,
         context=[t1, t2],
         expected_output=(
-            "Tài liệu kiến trúc gồm: danh sách file cần thay đổi, design pattern được chọn, "
-            "phân tích side effects, và data flow."
+            "File 'reports/t3_architecture.md' gồm: danh sách file cần tạo, design pattern, data flow."
         ),
     )
 
     t4 = Task(
         description=(
-            "Dựa trên thiết kế của Architect, viết toàn bộ source code cho dự án.\n"
-            "Tất cả file code phải nằm trong thư mục 'src/' (không có tiền tố 'workspace/').\n\n"
-            "QUY TẮC VỀ ĐƯỜNG DẪN (QUAN TRỌNG):\n"
-            "  - ĐÚNG: file_path='src/index.html', file_path='src/app.js'\n"
-            "  - SAI:  file_path='workspace/src/index.html'\n\n"
-            "QUY TRÌNH BẮT BUỘC — làm tuần tự từng bước:\n"
-            "Bước 1: Đọc 'reports/t3_architecture.md' để lấy danh sách file cần tạo.\n"
-            "Bước 2: Với MỖI file trong danh sách, gọi Write File để ghi nội dung thật:\n"
-            "  - file_path: relative path bắt đầu bằng 'src/', ví dụ 'src/index.html'\n"
-            "  - content: toàn bộ nội dung file đó (KHÔNG được để trống hoặc placeholder)\n"
-            "  - Gọi Write File một lần cho mỗi file — KHÔNG gộp nhiều file vào 1 lần gọi.\n"
-            "Bước 3: Sau khi ghi hết, ghi tóm tắt danh sách file đã tạo vào 'reports/t4_code_summary.md'.\n\n"
-            "NGHIÊM CẤM:\n"
-            "- Bỏ qua bất kỳ file nào đã được Architect chỉ định.\n"
-            "- Dùng markdown code fence (``` ```) khi gọi Write File.\n"
-            "- Để nội dung file trống hoặc dùng placeholder như '# TODO'.\n"
+            "Dùng Read File đọc 'reports/t3_architecture.md', viết toàn bộ source code:\n"
+            "1. Với MỖI file trong danh sách, gọi Write File một lần (không gộp nhiều file):\n"
+            "   - file_path: 'src/ten_file.ext'  (đúng: 'src/index.html', sai: 'workspace/src/index.html')\n"
+            "   - content: nội dung thật, KHÔNG để trống, KHÔNG dùng placeholder '#TODO'\n"
+            "   - KHÔNG dùng markdown code fence trong content\n"
+            "2. Nếu một file > 300 dòng, tách thành các module nhỏ hơn.\n"
+            "3. Sau khi ghi hết, ghi tóm tắt vào 'reports/t4_code_summary.md'."
         ),
         agent=coder,
-        context=[t1, t2, t3],
+        context=[t3],
         expected_output=(
-            "Toàn bộ source code đã được ghi xuống disk trong thư mục 'src/'. "
-            "File 'reports/t4_code_summary.md' liệt kê đường dẫn và mô tả ngắn của từng file đã tạo."
-            "Phải tạo file hướng dẫn sử dụng và triển khai nếu Architect yêu cầu. Code phải sạch, có comment giải thích, "
+            "Tất cả file source đã được ghi vào 'src/'. "
+            "File 'reports/t4_code_summary.md' liệt kê đường dẫn và mô tả của từng file."
         ),
     )
 
+    if is_frontend:
+        t5_desc = (
+            "Kiểm tra chất lượng code frontend do Coder viết:\n"
+            "1. Dùng Read File đọc tất cả file trong 'src/'.\n"
+            "2. Kiểm tra HTML: thẻ đóng mở đúng, có DOCTYPE và charset.\n"
+            "3. Kiểm tra JS: không có syntax error rõ ràng, không có biến chưa khai báo.\n"
+            "4. Kiểm tra bảo mật: không hardcode API key, không XSS rõ ràng.\n"
+            "5. Kiểm tra responsive: có meta viewport, CSS media query.\n"
+            "Ghi báo cáo vào 'reports/t5_qc_report.md' với kết luận PASS hoặc FAIL kèm chi tiết."
+        )
+        t5_expected = (
+            "File 'reports/t5_qc_report.md' ghi kết quả kiểm tra HTML/JS/CSS: PASS hoặc FAIL."
+        )
+    else:
+        t5_desc = (
+            "Kiểm thử toàn bộ code do Coder viết:\n"
+            "1. Viết Unit Test, lưu vào 'tests/test_*.py' (không lưu vào thư mục gốc).\n"
+            "2. Chạy pytest, ghi lại toàn bộ output.\n"
+            "3. Nếu có test FAIL: ghi rõ nguyên nhân.\n"
+            "4. Chỉ kết luận PASS khi 100% test xanh.\n"
+            "5. Kiểm tra thêm: lỗi bảo mật, lỗi logic, vấn đề hiệu năng.\n"
+            "Ghi báo cáo vào 'reports/t5_qc_report.md'."
+        )
+        t5_expected = (
+            "File 'reports/t5_qc_report.md' ghi kết quả pytest (pass/fail) và xác nhận 100% pass."
+        )
+
     t5 = Task(
-        description=(
-            "Kiểm thử toàn bộ code vừa được Coder viết:\n"
-            "1. Viết Unit Test cho các function/class chính.\n"
-            "   - File test PHẢI lưu vào 'tests/test_*.py' (ví dụ: 'tests/test_models.py').\n"
-            "   - KHÔNG lưu file test vào thư mục gốc workspace.\n"
-            "2. Chạy pytest và ghi lại toàn bộ output.\n"
-            "3. Nếu có test FAIL: ghi rõ nguyên nhân và yêu cầu Coder sửa lại.\n"
-            "4. Chỉ đánh dấu PASS khi 100% test xanh.\n"
-            "5. Kiểm tra thêm: lỗi bảo mật rõ ràng, lỗi logic, vấn đề hiệu năng.\n"
-            "Ghi báo cáo vào 'reports/t5_qc_report.md'. "
-            "LƯU Ý: file_path KHÔNG được có tiền tố 'workspace/'."
-        ),
+        description=t5_desc,
         agent=qc,
         context=[t4],
-        expected_output=(
-            "Báo cáo QC gồm: kết quả pytest (số pass/fail), "
-            "danh sách bug tìm được (nếu có), và xác nhận 100% pass cuối cùng."
-        ),
+        expected_output=t5_expected,
     )
 
     t6 = Task(
         description=(
-            "Review toàn bộ code mà Coder vừa viết "
-            "(không cần quan tâm code chạy được không — đó là việc của QC):\n"
+            "Review code trong 'src/' (không cần quan tâm code chạy được không — đó là việc QC):\n"
             "1. Code Style: tên biến/hàm có rõ ràng, nhất quán không?\n"
-            "2. Clean Code: có code thừa, hàm quá dài (>30 dòng), logic lồng nhau quá sâu không?\n"
-            "3. Security: có lỗ hổng hiển nhiên (hardcode secret, SQL injection, v.v.) không?\n"
-            "4. Liệt kê cụ thể: file, dòng, vấn đề, và hướng sửa.\n"
-            "Ghi nhận xét vào 'reports/t6_review.md'. "
-            "LƯU Ý: file_path KHÔNG được có tiền tố 'workspace/'."
+            "2. Clean Code: code thừa, hàm >30 dòng, logic lồng nhau quá sâu?\n"
+            "3. Security: hardcode secret, injection rõ ràng?\n"
+            "4. Liệt kê cụ thể: file, dòng, vấn đề, hướng sửa.\n"
+            "Ghi nhận xét vào 'reports/t6_review.md' với kết luận APPROVED hoặc REQUEST CHANGES."
         ),
         agent=reviewer,
         context=[t4, t5],
         expected_output=(
-            "Báo cáo review gồm: danh sách vấn đề style/clean code/security (nếu có), "
-            "và kết luận: APPROVED hoặc REQUEST CHANGES."
+            "File 'reports/t6_review.md' liệt kê vấn đề và kết luận APPROVED hoặc REQUEST CHANGES."
         ),
     )
 
     t7 = Task(
         description=(
-            "Tổng hợp kết quả từ toàn bộ pipeline và tạo báo cáo cuối cùng cho User:\n"
+            "Tổng hợp kết quả pipeline, tạo báo cáo cuối cho User:\n"
             "1. Tóm tắt những gì đã làm được.\n"
             "2. Liệt kê file đã tạo/sửa.\n"
-            "3. Kết quả test (số lượng pass/fail từ QC).\n"
-            "4. Nhận xét chất lượng code (từ Reviewer).\n"
-            "5. Bước tiếp theo nếu có.\n"
-            "Ghi tóm tắt vào 'reports/t7_final_report.md'.\n"
-            "LƯU Ý: file_path KHÔNG được có tiền tố 'workspace/'.\n"
-            "Dòng cuối báo cáo phải theo format: "
-            "'✅ Xong! Đã [action]. [X] file thay đổi. [Y] test pass. Ông check nhé!'"
+            "3. Kết quả test/QC (từ t5).\n"
+            "4. Nhận xét chất lượng code (từ t6).\n"
+            "5. Bước tiếp theo (nếu có).\n"
+            "Ghi vào 'reports/t7_final_report.md' bằng Write File.\n"
+            "Đồng cuối: '✅ Xong! Đã [action]. [X] file thay đổi. [Y] test pass. Ông check nhé!'"
         ),
         agent=pm,
-        context=[t3, t4, t5, t6],
+        context=[t4, t5, t6],
         expected_output=(
-            "Báo cáo tóm tắt cuối cùng, ngắn gọn, rõ ràng: "
-            "việc đã xong, số file thay đổi, kết quả test, chất lượng code."
+            "File 'reports/t7_final_report.md': tóm tắt ngắn gọn, rõ ràng."
         ),
     )
 
