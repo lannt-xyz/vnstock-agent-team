@@ -65,12 +65,15 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
     t3 = Task(
         description=(
             "Dựa trên kế hoạch đã được review, thiết kế giải pháp kỹ thuật:\n"
-            "1. Đọc codebase hiện tại để hiểu context.\n"
-            "2. Liệt kê tất cả file cần tạo mới hoặc chỉnh sửa (kèm lý do).\n"
-            "3. Chọn Design Pattern phù hợp, giải thích tại sao.\n"
-            "4. Kiểm tra side effects: thay đổi có phá vỡ module nào không?\n"
+            "QUAN TRỌNG: Technology stack phải xuất phát TRỰC TIẾP từ yêu cầu ở t1/t2. "
+            "KHÔNG tự ý chọn framework (Flask, Django, SQLAlchemy...) nếu yêu cầu không đề cập.\n"
+            "Ví dụ: nếu yêu cầu là web app đọc Google Sheets → tech stack là HTML+JS+Google Sheets API, không phải Flask.\n\n"
+            "1. Đọc kỹ lại yêu cầu trong 'reports/t1_task_plan.md' và 'reports/t2_plan_review.md'.\n"
+            "2. Xác định technology stack phù hợp với yêu cầu thực tế (front-end, back-end, third-party API...).\n"
+            "3. Liệt kê TẤT CẢ file cần tạo với đường dẫn và mô tả nội dung cụ thể.\n"
+            "4. Chọn Design Pattern phù hợp, giải thích tại sao.\n"
             "5. Mô tả data flow giữa các module.\n"
-            "Ghi tài liệu vào 'reports/t3_architecture.md'."
+            "Ghi tài liệu vào 'reports/t3_architecture.md'.\n"
             "LƯU Ý: file_path KHÔNG được có tiền tố 'workspace/'."
         ),
         agent=architect,
@@ -114,7 +117,9 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
     t5 = Task(
         description=(
             "Kiểm thử toàn bộ code vừa được Coder viết:\n"
-            "1. Viết Unit Test cho các function/class chính, lưu vào file 'test_*.py'.\n"
+            "1. Viết Unit Test cho các function/class chính.\n"
+            "   - File test PHẢI lưu vào 'tests/test_*.py' (ví dụ: 'tests/test_models.py').\n"
+            "   - KHÔNG lưu file test vào thư mục gốc workspace.\n"
             "2. Chạy pytest và ghi lại toàn bộ output.\n"
             "3. Nếu có test FAIL: ghi rõ nguyên nhân và yêu cầu Coder sửa lại.\n"
             "4. Chỉ đánh dấu PASS khi 100% test xanh.\n"

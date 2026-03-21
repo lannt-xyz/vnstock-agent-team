@@ -54,29 +54,69 @@ def _load_state() -> dict:
     return {}
 
 
-def _flush_write_calls(text: str) -> None:
-    """Extract tất cả Write File JSON calls trong một đoạn text và thực thi hết.
-    Hỗ trợ cả 3 format mà local model hay output:
-      - ```json {...} ```  (markdown fenced block)
-      - {...}              (bare JSON object inline)
-      - Action Input: {...}
+def _extract_json_objects(text: str) -> list[str]:
+    """Extract all top-level JSON objects from text using bracket-counting.
+    Correctly handles: nested braces, string literals, and escape sequences.
+    This fixes the broken regex approach that fails on code content with {}.
     """
-    # Gom tất cả JSON object candidates (fenced hoặc bare)
-    candidates: list[str] = []
+    objects: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] == '{':
+            depth = 0
+            in_string = False
+            escape_next = False
+            j = i
+            while j < n:
+                c = text[j]
+                if escape_next:
+                    escape_next = False
+                elif in_string:
+                    if c == '\\':
+                        escape_next = True
+                    elif c == '"':
+                        in_string = False
+                else:
+                    if c == '"':
+                        in_string = True
+                    elif c == '{':
+                        depth += 1
+                    elif c == '}':
+                        depth -= 1
+                        if depth == 0:
+                            objects.append(text[i:j + 1])
+                            i = j  # outer loop will i+=1
+                            break
+                j += 1
+        i += 1
+    return objects
 
-    # 1. Fenced code blocks
-    candidates += re.findall(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
 
-    # 2. "Action Input: {...}"
-    candidates += re.findall(r'Action Input:\s*(\{.*?\})', text, re.DOTALL)
+def _normalize_path(fp: str) -> str:
+    """Strip absolute workspace prefix or 'workspace/' prefix from file_path."""
+    fp = fp.strip()
+    ws_str = str(WORKSPACE_ROOT)
+    # Strip absolute path prefix (with or without leading slash)
+    for prefix in (ws_str, ws_str.lstrip("/")):
+        if fp.startswith(prefix):
+            fp = fp[len(prefix):].lstrip("/")
+            break
+    # Strip relative 'workspace/' prefix
+    if fp.startswith("workspace/"):
+        fp = fp[len("workspace/"):]
+    return fp
 
-    # 3. Bare top-level JSON objects (fallback: tìm { ... } lớn nhất có file_path)
-    for m in re.finditer(r'\{[^{}]*"file_path"[^{}]*\}', text, re.DOTALL):
-        candidates.append(m.group(0))
 
-    executed = set()
+def _flush_write_calls(text: str) -> None:
+    """Extract all Write File JSON calls from text and execute them.
+    Uses a proper bracket-counting parser — works even when content has {} inside
+    (e.g. JavaScript, HTML templates, Python dicts).
+    """
+    candidates = _extract_json_objects(text)
+
+    executed: set[str] = set()
     for raw in candidates:
-        raw = raw.strip()
         if raw in executed:
             continue
         try:
@@ -86,23 +126,13 @@ def _flush_write_calls(text: str) -> None:
         if not isinstance(data, dict):
             continue
         if "file_path" in data and "content" in data:
-            fp = data["file_path"].strip()
-            # Normalize: bỏ absolute path prefix nếu model quên dấu / đầu
-            # VD: "home/lanntxyz/.../workspace/reports/x.md" → "reports/x.md"
-            ws_str = str(WORKSPACE_ROOT)
-            for prefix in (ws_str.lstrip("/"), ws_str):
-                if fp.startswith(prefix):
-                    fp = fp[len(prefix):].lstrip("/")
-                    break
-            # Bỏ tiền tố "workspace/" nếu model vẫn thêm vào
-            if fp.startswith("workspace/"):
-                fp = fp[len("workspace/"):]
+            fp = _normalize_path(str(data["file_path"]))
             result = safe_file_write._run(
                 file_path=fp,
                 content=data["content"],
                 overwrite=data.get("overwrite", True),
             )
-            print(f"\n[auto-tool] Write File → {result}\n")
+            print(f"\n[auto-tool] Write File → {fp} | {result}\n")
             executed.add(raw)
 
 
