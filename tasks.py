@@ -1,6 +1,10 @@
+import os
 from crewai import Task
 
 from tools import WORKSPACE_ROOT
+
+# Relative path for output_file (CrewAI strips leading '/' from absolute paths)
+_WS_REL = os.path.relpath(str(WORKSPACE_ROOT))
 
 # ── Path rule — inject once (t1 only) ─────────────────────────────────────────
 _PATH_NOTE = (
@@ -35,17 +39,14 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
     t1 = Task(
         description=(
             f"Yêu cầu từ User:\n{request}{retry_context}\n"
-            f"{_PATH_NOTE}\n"
-            "Nhiệm vụ:\n"
+            "Nhiệm vụ — xuất kế hoạch gồm:\n"
             "1. Phân tích yêu cầu, liệt kê cụ thể các User Stories.\n"
             "2. Xác định phạm vi và Done Criteria đo lường được.\n"
-            "3. Liệt kê rủi ro tiềm ẩn.\n"
-            "4. Ghi kế hoạch vào 'reports/t1_task_plan.md' bằng Write File."
+            "3. Liệt kê rủi ro tiềm ẩn."
         ),
         agent=pm,
-        expected_output=(
-            "File 'reports/t1_task_plan.md' chứa: User Stories, Done Criteria, rủi ro."
-        ),
+        expected_output="Kế hoạch gồm: User Stories, Done Criteria, rủi ro.",
+        output_file=f"{_WS_REL}/reports/t1_task_plan.md",
     )
 
     t2 = Task(
@@ -55,49 +56,54 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             "2. Có Task thiếu, dư, hoặc mâu thuẫn không?\n"
             "3. Done Criteria có đo lường được không?\n"
             "4. Rủi ro kỹ thuật nào PM chưa nhận ra?\n"
-            "Kết luận: APPROVED hoặc REQUEST CHANGES (kèm danh sách điểm cần sửa).\n"
-            "Ghi nhận xét vào 'reports/t2_plan_review.md' bằng Write File."
+            "Xuất kết luận: APPROVED hoặc REQUEST CHANGES (kèm danh sách điểm cần sửa)."
         ),
         agent=plan_reviewer,
         context=[t1],
-        expected_output=(
-            "File 'reports/t2_plan_review.md' ghi kết luận APPROVED hoặc REQUEST CHANGES kèm lý do."
-        ),
+        expected_output="Kết luận APPROVED hoặc REQUEST CHANGES kèm lý do cụ thể.",
+        output_file=f"{_WS_REL}/reports/t2_plan_review.md",
     )
 
     t3 = Task(
         description=(
-            "Dùng Read File đọc 'reports/t1_task_plan.md' và 'reports/t2_plan_review.md', thiết kế kiến trúc:\n"
-            "1. Tech stack phải xuất phát TRỰC TIẾP từ yêu cầu — không tự ý thêm framework.\n"
-            "   Ví dụ: web app đọc Google Sheets → HTML+JS+Google Sheets API, KHÔNG Flask.\n"
-            "2. Liệt kê TẤT CẢ file cần tạo: đường dẫn 'src/...' và mô tả nội dung.\n"
-            "3. Chọn Design Pattern, giải thích lý do.\n"
-            "4. Mô tả data flow giữa các module.\n"
-            "Ghi tài liệu vào 'reports/t3_architecture.md' bằng Write File."
+            "Dùng Read File đọc 'reports/t1_task_plan.md' và 'reports/t2_plan_review.md'.\n"
+            "Xuất thiết kế kiến trúc gồm:\n"
+            "1. Tech stack TRỰC TIẾP từ yêu cầu — web app Google Sheets → HTML+JS+Google Sheets API.\n"
+            "2. Danh sách TẤT CẢ file cần tạo với đường dẫn 'src/...' và mô tả nội dung.\n"
+            "3. Design Pattern và lý do.\n"
+            "4. Data flow giữa các module."
         ),
         agent=architect,
         context=[t1, t2],
-        expected_output=(
-            "File 'reports/t3_architecture.md' gồm: danh sách file cần tạo, design pattern, data flow."
-        ),
+        expected_output="Danh sách file cần tạo (src/...), design pattern, data flow.",
+        output_file=f"{_WS_REL}/reports/t3_architecture.md",
     )
 
     t4 = Task(
         description=(
-            "Dùng Read File đọc 'reports/t3_architecture.md', viết toàn bộ source code:\n"
-            "1. Với MỖI file trong danh sách, gọi Write File một lần (không gộp nhiều file):\n"
-            "   - file_path: 'src/ten_file.ext'  (đúng: 'src/index.html', sai: 'workspace/src/index.html')\n"
-            "   - content: nội dung thật, KHÔNG để trống, KHÔNG dùng placeholder '#TODO'\n"
-            "   - KHÔNG dùng markdown code fence trong content\n"
-            "2. Nếu một file > 300 dòng, tách thành các module nhỏ hơn.\n"
-            "3. Sau khi ghi hết, ghi tóm tắt vào 'reports/t4_code_summary.md'."
+            "Dùng Read File đọc 'reports/t3_architecture.md'.\n"
+            "Viết TOÀN BỘ source code cho mọi file trong danh sách kiến trúc.\n"
+            "\n"
+            "OUTPUT FORMAT — dùng chính xác cấu trúc này cho mỗi file:\n"
+            "### FILE: src/index.html\n"
+            "[nội dung HTML đầy đủ]\n"
+            "\n"
+            "### FILE: src/app.js\n"
+            "[nội dung JS đầy đủ]\n"
+            "\n"
+            "Quy tắc bắt buộc:\n"
+            "- Mỗi file BẮT BUỘC có nội dung thực tế, đầy đủ (không placeholder, không TODO)\n"
+            "- Đường dẫn: 'src/...' không có tiền tố workspace/\n"
+            "- Không dùng ``` code fence trong output\n"
+            "- Cuối cùng: liệt kê ngắn gọn các file đã tạo"
         ),
         agent=coder,
         context=[t3],
         expected_output=(
-            "Tất cả file source đã được ghi vào 'src/'. "
-            "File 'reports/t4_code_summary.md' liệt kê đường dẫn và mô tả của từng file."
+            "Output dạng '### FILE: src/...' cho mỗi file source có nội dung đầy đủ. "
+            "Cuối: danh sách file đã tạo."
         ),
+        output_file=f"{_WS_REL}/reports/t4_code_summary.md",
     )
 
     if is_frontend:
@@ -108,11 +114,9 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             "3. Kiểm tra JS: không có syntax error rõ ràng, không có biến chưa khai báo.\n"
             "4. Kiểm tra bảo mật: không hardcode API key, không XSS rõ ràng.\n"
             "5. Kiểm tra responsive: có meta viewport, CSS media query.\n"
-            "Ghi báo cáo vào 'reports/t5_qc_report.md' với kết luận PASS hoặc FAIL kèm chi tiết."
+            "Xuất báo cáo với kết luận PASS hoặc FAIL kèm chi tiết."
         )
-        t5_expected = (
-            "File 'reports/t5_qc_report.md' ghi kết quả kiểm tra HTML/JS/CSS: PASS hoặc FAIL."
-        )
+        t5_expected = "Báo cáo QC kết quả kiểm tra HTML/JS/CSS: PASS hoặc FAIL kèm chi tiết."
     else:
         t5_desc = (
             "Kiểm thử toàn bộ code do Coder viết:\n"
@@ -121,51 +125,47 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             "3. Nếu có test FAIL: ghi rõ nguyên nhân.\n"
             "4. Chỉ kết luận PASS khi 100% test xanh.\n"
             "5. Kiểm tra thêm: lỗi bảo mật, lỗi logic, vấn đề hiệu năng.\n"
-            "Ghi báo cáo vào 'reports/t5_qc_report.md'."
+            "Xuất báo cáo kết quả pytest."
         )
-        t5_expected = (
-            "File 'reports/t5_qc_report.md' ghi kết quả pytest (pass/fail) và xác nhận 100% pass."
-        )
+        t5_expected = "Báo cáo pytest (pass/fail) và xác nhận 100% pass."
 
     t5 = Task(
         description=t5_desc,
         agent=qc,
         context=[t4],
         expected_output=t5_expected,
+        output_file=f"{_WS_REL}/reports/t5_qc_report.md",
     )
 
     t6 = Task(
         description=(
-            "Review code trong 'src/' (không cần quan tâm code chạy được không — đó là việc QC):\n"
+            "Dùng Read File đọc các file trong 'src/', xuất nhận xét:\n"
             "1. Code Style: tên biến/hàm có rõ ràng, nhất quán không?\n"
             "2. Clean Code: code thừa, hàm >30 dòng, logic lồng nhau quá sâu?\n"
             "3. Security: hardcode secret, injection rõ ràng?\n"
             "4. Liệt kê cụ thể: file, dòng, vấn đề, hướng sửa.\n"
-            "Ghi nhận xét vào 'reports/t6_review.md' với kết luận APPROVED hoặc REQUEST CHANGES."
+            "Kết luận: APPROVED hoặc REQUEST CHANGES."
         ),
         agent=reviewer,
         context=[t4, t5],
-        expected_output=(
-            "File 'reports/t6_review.md' liệt kê vấn đề và kết luận APPROVED hoặc REQUEST CHANGES."
-        ),
+        expected_output="Danh sách vấn đề và kết luận APPROVED hoặc REQUEST CHANGES.",
+        output_file=f"{_WS_REL}/reports/t6_review.md",
     )
 
     t7 = Task(
         description=(
-            "Tổng hợp kết quả pipeline, tạo báo cáo cuối cho User:\n"
+            "Tổng hợp kết quả pipeline, xuất báo cáo cuối cho User gồm:\n"
             "1. Tóm tắt những gì đã làm được.\n"
             "2. Liệt kê file đã tạo/sửa.\n"
             "3. Kết quả test/QC (từ t5).\n"
             "4. Nhận xét chất lượng code (từ t6).\n"
             "5. Bước tiếp theo (nếu có).\n"
-            "Ghi vào 'reports/t7_final_report.md' bằng Write File.\n"
-            "Đồng cuối: '✅ Xong! Đã [action]. [X] file thay đổi. [Y] test pass. Ông check nhé!'"
+            "Câu cuối: '✅ Xong! Đã [action]. [X] file thay đổi. [Y] test pass. Ông check nhé!'"
         ),
         agent=pm,
         context=[t4, t5, t6],
-        expected_output=(
-            "File 'reports/t7_final_report.md': tóm tắt ngắn gọn, rõ ràng."
-        ),
+        expected_output="Báo cáo tóm tắt ngắn gọn, rõ ràng về kết quả pipeline.",
+        output_file=f"{_WS_REL}/reports/t7_final_report.md",
     )
 
     return [t1, t2, t3, t4, t5, t6, t7]
@@ -197,7 +197,7 @@ def create_quant_tasks(architect, coder, qc, request, previous_result=None):
             "2. Đề xuất cụ thể cho từng nguyên nhân (bộ lọc, tham số, logic).\n"
             "3. Thứ tự ưu tiên implement."
         ),
-        output_file=str(ws / "reports" / "t1_analysis.md"),
+        output_file=f"{_WS_REL}/reports/t1_analysis.md",
     )
 
     t2 = Task(
@@ -217,7 +217,7 @@ def create_quant_tasks(architect, coder, qc, request, previous_result=None):
             f"File {ws}/ml/optimized_strategy.py sạch sẽ, có thể import và chạy được, "
             "với hàm run_backtest() trả về dict có key 'win_rate'."
         ),
-        output_file=str(ws / "reports" / "t2_code_summary.md"),
+        output_file=f"{_WS_REL}/reports/t2_code_summary.md",
     )
 
     t3 = Task(
@@ -242,7 +242,7 @@ def create_quant_tasks(architect, coder, qc, request, previous_result=None):
             "- Nếu < 65%: danh sách fix cụ thể đã ghi vào reports/fix_instructions.md.\n"
             "- Nếu >= 65%: tuyên bố thành công và path của final_report.md."
         ),
-        output_file=str(ws / "reports" / "t3_backtest_result.md"),
+        output_file=f"{_WS_REL}/reports/t3_backtest_result.md",
     )
 
     return [t1, t2, t3]
@@ -261,7 +261,7 @@ def create_cafef_news_tasks(architect, coder, qc):
         ),
         agent=coder,
         expected_output="File 'data/raw_cafef.json' chứa danh sách bài viết dạng JSON (list of dict).",
-        output_file=str(ws / "reports" / "cafef_t1_crawl.md"),
+        output_file=f"{_WS_REL}/reports/cafef_t1_crawl.md",
     )
 
     t2 = Task(
@@ -274,7 +274,7 @@ def create_cafef_news_tasks(architect, coder, qc):
         agent=architect,
         context=[t1],
         expected_output="File 'data/classified_cafef.json' chứa danh sách bài viết đã phân loại (có trường 'category').",
-        output_file=str(ws / "reports" / "cafef_t2_classify.md"),
+        output_file=f"{_WS_REL}/reports/cafef_t2_classify.md",
     )
 
     t3 = Task(
@@ -285,7 +285,7 @@ def create_cafef_news_tasks(architect, coder, qc):
         agent=coder,
         context=[t2],
         expected_output="File 'data/cafef_news.csv' chứa dữ liệu tin tức đã phân loại, dạng CSV.",
-        output_file=str(ws / "reports" / "cafef_t3_csv.md"),
+        output_file=f"{_WS_REL}/reports/cafef_t3_csv.md",
     )
 
     return [t1, t2, t3]
@@ -303,6 +303,6 @@ def create_cafef_news_pipeline_task(qc):
         ),
         agent=qc,
         expected_output="File 'data/cafef_news.csv' chứa dữ liệu tin tức đã phân loại, dạng CSV.",
-        output_file=str(ws / "reports" / "cafef_pipeline_report.md"),
+        output_file=f"{_WS_REL}/reports/cafef_pipeline_report.md",
     )
     return [t]

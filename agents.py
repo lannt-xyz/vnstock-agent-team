@@ -49,7 +49,7 @@ def create_agents():
             "sẽ trả lại ngay với danh sách chỉnh sửa cụ thể trước khi cho phép team tiến tiếp."
         ),
         llm=llm_factory.get_local_model(),
-        tools=[safe_file_read],
+        tools=[safe_file_read, safe_file_write],
         verbose=True,
         allow_delegation=False,
         memory=False,
@@ -70,7 +70,7 @@ def create_agents():
             "chéo (side effects) hay không. Cực kỳ dị ứng với 'Spaghetti code'."
         ),
         llm=llm_factory.get_local_model(),
-        tools=[safe_dir_read, safe_file_read],
+        tools=[safe_dir_read, safe_file_read, safe_file_write],
         verbose=True,
         allow_delegation=False,
         memory=False,
@@ -136,7 +136,7 @@ def create_agents():
             "Sẽ yêu cầu Coder sửa lại nếu đặt tên biến không rõ ràng hoặc hàm quá dài."
         ),
         llm=llm_factory.get_local_model(),
-        tools=[safe_file_read, safe_dir_read],
+        tools=[safe_file_read, safe_dir_read, safe_file_write],
         verbose=True,
         allow_delegation=False,
         memory=False,
