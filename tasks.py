@@ -78,8 +78,7 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             "{\n"
             '  "files": [\n'
             '    {"name": "src/config.js", "description": "Cấu hình API keys và constants"},\n'
-            '    {"name": "src/app.js",    "description": "Entry point, khởi tạo app"},\n'
-            '    {"name": "Dockerfile.checker", "description": "Docker QC environment — cài đủ runtime và linter phù hợp tech stack"}\n'
+            '    {"name": "src/app.js",    "description": "Entry point, khởi tạo app"}\n'
             '  ],\n'
             '  "qa_suite": {\n'
             '    "syntax_cmd": "<lệnh kiểm tra syntax phù hợp tech stack, vd: node --check src/js/*.js>",\n'

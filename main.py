@@ -269,17 +269,120 @@ WORKDIR /workspace
 """,
 }
 
+# ── Auto Dockerfile generation from qa_suite ─────────────────────────────────
+_NODE_BINARIES = frozenset({"node", "eslint", "stylelint", "prettier", "tsc", "npx"})
+_PYTHON_BINARIES = frozenset({"python", "python3", "pytest", "pylint", "black", "mypy", "flake8"})
+# eslint 10 flat config always needs globals + @eslint/js bundled with it
+_ESLINT_NPM_GROUP = "npm install -g eslint globals @eslint/js stylelint prettier"
+# Per-binary RUN recipe (None = handled elsewhere or built into base image)
+_QA_TOOL_RECIPES: dict[str, str | None] = {
+    "node":      None,  # installed as part of node setup block
+    "eslint":    None,  # part of _ESLINT_NPM_GROUP
+    "stylelint": None,  # part of _ESLINT_NPM_GROUP
+    "prettier":  None,  # part of _ESLINT_NPM_GROUP
+    "tsc":       "npm install -g typescript",
+    "npx":       None,  # bundled with node
+    "pytest":    "pip install --no-cache-dir pytest",
+    "pylint":    "pip install --no-cache-dir pylint",
+    "black":     "pip install --no-cache-dir black",
+    "mypy":      "pip install --no-cache-dir mypy",
+    "flake8":    "pip install --no-cache-dir flake8",
+    "python":    None,  # built into python base image
+    "python3":   None,
+    "cargo":     (
+        "apt-get update && apt-get install -y curl build-essential && "
+        "curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path"
+    ),
+    "go":       "apt-get update && apt-get install -y golang-go && apt-get clean",
+    "mvn":      "apt-get update && apt-get install -y maven && apt-get clean",
+    "gradle":   "apt-get update && apt-get install -y gradle && apt-get clean",
+    "ruby":     "apt-get update && apt-get install -y ruby ruby-dev && apt-get clean",
+    "rspec":    "gem install rspec",
+    "php":      "apt-get update && apt-get install -y php && apt-get clean",
+}
 
-def _ensure_checker_image(cycle: int, is_frontend: bool = True) -> str:
-    """Build Docker image from Dockerfile.checker (fallback to hardcoded if missing).
+
+def _generate_checker_dockerfile(qa_suite: dict) -> str:
+    """Auto-generate Dockerfile.checker from qa_suite tool list.
+    Handles ESLint 10 globals dependency, multi-stack, and base image selection.
+    """
+    binaries: list[str] = []
+    for key in ("syntax_cmd", "lint_cmd", "test_cmd"):
+        cmd = (qa_suite.get(key) or "").strip()
+        if cmd:
+            base_bin = os.path.basename(cmd.split()[0])
+            if base_bin and base_bin not in binaries:
+                binaries.append(base_bin)
+
+    needs_node   = any(b in _NODE_BINARIES for b in binaries)
+    needs_python = any(b in _PYTHON_BINARIES for b in binaries)
+    needs_cargo  = "cargo" in binaries
+
+    # Base image selection
+    if needs_cargo:
+        base = "rust:1-slim"
+    elif needs_python:
+        base = "python:3.11-slim"
+    elif needs_node:
+        base = "node:20-slim"
+    else:
+        base = "debian:bookworm-slim"
+
+    run_steps: list[str] = []
+    seen: set[str] = set()
+
+    def _add(cmd: str) -> None:
+        if cmd and cmd not in seen:
+            seen.add(cmd)
+            run_steps.append(cmd)
+
+    # Python base + node needed → install node on top
+    if base == "python:3.11-slim" and needs_node:
+        _add(
+            "apt-get update && apt-get install -y curl && "
+            "curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && "
+            "apt-get install -y nodejs && apt-get clean"
+        )
+
+    # Always bundle full eslint group when any node tool detected
+    if needs_node:
+        _add(_ESLINT_NPM_GROUP)
+
+    # Per-binary recipes for everything else
+    for binary in binaries:
+        if binary in _NODE_BINARIES:
+            continue  # handled above
+        recipe = _QA_TOOL_RECIPES.get(binary)
+        if recipe:
+            _add(recipe)
+
+    lines = [f"FROM {base}", ""]
+    for step in run_steps:
+        lines.append(f"RUN {step}")
+    lines += [
+        "",
+        "# Non-root user for security",
+        "RUN id checker 2>/dev/null || useradd -m checker",
+        "USER checker",
+        "WORKDIR /workspace",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _ensure_checker_image(cycle: int, qa_suite: dict) -> str:
+    """Auto-generate Dockerfile.checker from qa_suite then build Docker image.
     Returns image tag on success, '' on failure (caller uses local exec).
     """
     tag = f"project-checker:{cycle}"
     dockerfile = WORKSPACE_ROOT / "Dockerfile.checker"
-    if not dockerfile.exists():
-        fallback_key = "frontend" if is_frontend else "backend"
-        dockerfile.write_text(_FALLBACK_DOCKERFILES[fallback_key], encoding="utf-8")
-        _log(f"[docker] Dockerfile.checker missing — wrote '{fallback_key}' fallback")
+    if qa_suite:
+        content = _generate_checker_dockerfile(qa_suite)
+        dockerfile.write_text(content, encoding="utf-8")
+        _log(f"[docker] Dockerfile.checker auto-generated for tools: {list(qa_suite.keys())}")
+    elif not dockerfile.exists():
+        dockerfile.write_text(_FALLBACK_DOCKERFILES["frontend"], encoding="utf-8")
+        _log("[docker] No qa_suite + no Dockerfile.checker — wrote 'frontend' fallback")
     try:
         result = subprocess.run(
             ["docker", "build", "-t", tag, "-f", str(dockerfile), str(WORKSPACE_ROOT)],
@@ -601,8 +704,7 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
         "{\n"
         '  "files": [\n'
         '    {"name": "src/config.js", "description": "Cấu hình API keys và constants"},\n'
-        '    {"name": "src/app.js",    "description": "Entry point, khởi tạo app"},\n'
-        '    {"name": "Dockerfile.checker", "description": "Docker QC environment"}\n'
+        '    {"name": "src/app.js",    "description": "Entry point, khởi tạo app"}\n'
         '  ],\n'
         '  "qa_suite": {\n'
         '    "syntax_cmd": "node --check src/js/*.js",\n'
@@ -717,9 +819,9 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
         written = _extract_and_write_src(t4_raw)
         _log(f"[pipeline] src/ files written: {written}")
 
-        # On first QC attempt: build Docker checker image (Dockerfile.checker written by Coder)
+        # On first QC attempt: build Docker checker image auto-generated from qa_suite
         if qc_attempt == 1 and not container_name:
-            image_tag = _ensure_checker_image(cycle, is_frontend)
+            image_tag = _ensure_checker_image(cycle, qa_suite)
             if image_tag:
                 container_name = _start_checker_container(image_tag, cycle)
                 _tools_mod.checker_container = container_name
@@ -744,29 +846,33 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
         )
 
         # ── t5: QC ────────────────────────────────────────────────────────────
-        if is_frontend:
-            t5_desc = (
-                f"[FILE ĐÃ TẠO]: {src_files}\n\n[NỘI DUNG]\n{src_preview}\n\n"
-                f"[NGỮ CẢNH CODEBASE]: {rag_hint}\n\n"
-                "TRÌNH TỰ BẮT BUỘC:\n"
-                "1. Dùng 'Run Checks' với lệnh: node --check src/js/*.js\n"
-                "   (bỏ qua nếu không có Node.js — ghi rõ trong báo cáo)\n"
-                "2. Dùng 'Run Checks' với lệnh: eslint src/js/ --format compact\n"
-                "   (bỏ qua nếu eslint chưa cài — ghi rõ trong báo cáo)\n"
-                "3. Kiểm tra HTML: DOCTYPE, charset, thẻ đóng/mở đúng.\n"
-                "4. Kiểm tra bảo mật: không hardcode API key, không XSS.\n"
-                "5. Kiểm tra responsive: meta viewport, media query.\n"
-                "6. Kết luận PASS chỉ khi bước 1+2 không có syntax error.\n"
-                "Xuất báo cáo: PASS hoặc FAIL kèm stdout thực tế từ tool."
+        # Build qa_steps dynamically from qa_suite — never hardcode tools
+        qa_steps: list[str] = []
+        step_num = 1
+        for key, label in (("syntax_cmd", "syntax"), ("lint_cmd", "lint"), ("test_cmd", "test")):
+            cmd = (qa_suite.get(key) or "").strip()
+            if cmd:
+                qa_steps.append(
+                    f"{step_num}. Dùng 'Run Checks' với lệnh: {cmd}\n"
+                    f"   Nếu tool chưa cài (exit 127 / TOOL_NOT_INSTALLED) → ghi rõ vào báo cáo, KHÔNG thay lệnh khác."
+                )
+                step_num += 1
+        if not qa_steps:
+            qa_steps.append(
+                f"{step_num}. Không có qa_suite. Kiểm tra thủ công: đọc từng file, phát hiện lỗi syntax rõ ràng."
             )
-        else:
-            t5_desc = (
-                f"[FILE ĐÃ TẠO]: {src_files}\n\n[NỘI DUNG]\n{src_preview}\n\n"
-                f"[NGỮ CẢNH CODEBASE]: {rag_hint}\n\n"
-                "Kiểm tra:\n1. Chạy pytest và paste output thực tế.\n"
-                "2. Kiểm tra bảo mật và logic.\n"
-                "Kết luận: PASS hoặc FAIL kèm output thực tế."
-            )
+        qa_steps_text = "\n".join(qa_steps)
+        extra_checks_start = step_num
+
+        t5_desc = (
+            f"⚠️ LỆNH PHẢI CHẠY ĐÚNG THEO THỨ TỰ — KHÔNG THAY LỆNH KHÁC, KHÔNG TỰ THÊM LỆNH:\n\n"
+            f"{qa_steps_text}\n"
+            f"{extra_checks_start}. Kiểm tra bảo mật: không hardcode API key/secret, không XSS rõ ràng.\n\n"
+            f"[FILE ĐÃ TẠO]: {src_files}\n\n[NỘI DUNG MẪU]\n{src_preview}\n\n"
+            f"[NGỮ CẢNH CODEBASE]: {rag_hint}\n\n"
+            "Kết luận: PASS hoặc FAIL kèm stdout thực tế từ mỗi lệnh đã chạy.\n"
+            "PASS chỉ khi TẤT CẢ lệnh qa_suite không có syntax error (exit 127 = TOOL_NOT_INSTALLED, không tính FAIL)."
+        )
         _cb("task_start", "t5")
         t5 = _run_single_task(qc, t5_desc, "PASS hoặc FAIL kèm output thực tế.", "reports/t5_qc_report.md")
         _log(f"[pipeline] t5 done (attempt {qc_attempt})")
