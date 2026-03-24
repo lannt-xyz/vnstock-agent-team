@@ -22,18 +22,18 @@ Trước: t1(PM) → t2(Review) → t3(Architect fresh) → t4 → t5 → t6 →
 Sau:   t1(PM) → t2(Review) → tI(Investigation) → t3(Architect delta) → t4 → t5 → t6 → t7
 ```
 
-| # | ~Thời gian | Việc cần làm | File |
-|---|-----------|-------------|------|
-| S6-0 | 10p | **Quick path fix** (`_normalize_path` trong main.py): Dùng `os.path.normpath` để chuẩn hóa trước, sau đó check `startswith('src/')`. Nếu không → prepend `src/`. Tránh edge case `./index.html` → `src/./index.html`. Pattern: `p = os.path.normpath(cleaned); return p if p.startswith('src/') else 'src/' + p`. | main.py |
-| S6-1 | 15p | **`_build_codebase_snapshot()`**: Scan `src/` — trả về file tree + **"bản đồ gene"** của project. Thay vì lấy 300 ký tự đầu, **extract có chọn lọc**: với mỗi file text, lấy tất cả dòng chứa `<link`, `<script`, `import`, `export`, `require` (tối đa 40 dòng/file) — đây là dependency map thực tế cho Architect biết file nào đang link với file nào. Ưu tiên ≤8 file: `index.html`, `*.css`, `config*`, `package.json`. | main.py |
-| S6-2 | 30p | **tI Investigation task**: `_run_single_task` với Architect agent — dùng `safe_dir_read` + `safe_file_read` để: (1) liệt kê cấu trúc thư mục thực tế, (2) đọc `src/index.html` xác định CSS/JS đang được link, (3) phát hiện tech stack thực, (4) xuất **Current State Report**. Output: `reports/t0_codebase_audit.md`. | main.py |
-| S6-3 | 20p | **t3 prompt — delta constraint**: Inject `[HIỆN TRẠNG CODEBASE]\n{snapshot}` + ref `reports/t0_codebase_audit.md`. Thêm **2 ràng buộc cứng**: ① *"CHỈ liệt kê vào `files` những file cần TẠO MỚI hoặc SỬA. Mọi `src/` path PHẢI khớp tên file thực từ Current State Report."* ② *"Nếu định thay đổi file đã tồn tại, BẮT BUỘC giải thích TẠI SAO trong phần mô tả — file đó đang có vấn đề gì."* (Ép Agent suy nghĩ trước khi phá cấu trúc cũ.) | main.py, tasks.py |
-| S6-4 | 15p | **t4 per-file — modify mode**: Khi `fname` đã tồn tại trong snapshot: thêm *"File này đã tồn tại. Giữ nguyên CSS class names, JS function names. Chỉ thêm/sửa phần liên quan đến yêu cầu mới."* | main.py |
+| # | Status | ~Thời gian | Việc cần làm | File |
+|---|--------|-----------|-------------|------|
+| S6-0 | ✅ DONE | 10p | **Quick path fix** (`_normalize_path` trong main.py): `os.path.normpath` + `_SRC_EXTS` frozenset. Bare filename có ext web → force `src/`. File khác (Dockerfile, package.json) giữ nguyên. | main.py |
+| S6-1 | ✅ DONE | 15p | **`_build_codebase_snapshot()`**: Scan `src/` — file tree + dependency map. Extract dòng chứa `<link`, `<script`, `import`, `export`, `require` (max 40/file). Ưu tiên 8 file: index.html trước, rồi config*, package.json. | main.py |
+| S6-2 | ✅ DONE | 30p | **tI Investigation task**: `_run_single_task` với Architect agent — đọc src/, audit index.html, phát hiện mismatch, xuất Current State Report. Output: `reports/t0_codebase_audit.md`. Log: `[investigation] Current State: N file(s) found in src/`. | main.py |
+| S6-3 | ✅ DONE | 20p | **t3 prompt — delta constraint**: Inject `[HIỆN TRẠNG CODEBASE]` + audit_summary vào đầu t3 prompt. 2 ràng buộc cứng: ① path phải khớp file thực ② giải thích TẠI SAO khi sửa file cũ. | main.py |
+| S6-4 | ✅ DONE | 15p | **t4 per-file — modify mode**: `existing_src_files` set từ snapshot. Khi `fname in existing_src_files` → inject note giữ nguyên CSS class/JS function names, chỉ sửa phần liên quan. | main.py |
 
 **Done khi:**
-- Log `[investigation] Current State: N files found in src/` xuất hiện trước t3
-- t3 không còn tạo `src/styles/main.css` khi HTML đang link `css/styles.css`
-- Không còn `index.html` nằm ngoài `src/`
+- ✅ Log `[investigation] Current State: N file(s) found in src/` xuất hiện trước t3
+- ✅ t3 nhận `[HIỆN TRẠNG CODEBASE]` + 2 ràng buộc delta
+- ✅ Không còn `index.html` nằm ngoài `src/` (S6-0 fix)
 
 ---
 
