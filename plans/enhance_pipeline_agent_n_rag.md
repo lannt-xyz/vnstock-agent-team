@@ -461,6 +461,55 @@ Chỉ tính FAIL khi tool chạy ĐƯỢC và output thực sự chứa lỗi.
 
 ---
 
+### Sprint 5 — Generic Pipeline (Language-Agnostic) · ~90 phút 🔄 TODO
+
+**Mục tiêu:** Xóa mọi hardcode ngôn ngữ (node, eslint, pytest...) khỏi prompt và tool. Architect quyết định toàn bộ bộ lệnh QC và Docker image — pipeline chỉ là "ống dẫn" thực thi.
+
+> **Phụ thuộc:** Sprint 4 phải hoàn thành và Docker container chạy ổn định.
+
+**Bối cảnh:** Hiện tại t3/t5 prompt ghi cứng `node --check`, `eslint`, `pytest`. Nếu project là Rust/Go/Python, pipeline vẫn yêu cầu eslint → sai hoàn toàn. Sprint 5 sửa tận gốc bằng cách để Architect định nghĩa `qa_suite` — một dict lệnh QC — cùng với JSON inventory; t5 đọc `qa_suite` đó và thực thi, không cần biết ngôn ngữ là gì.
+
+> ⚠️ **Pitfall cần tránh — "QC sáng tạo lại lệnh":** Khi gặp lệnh lạ (vd: `cargo check`, `go vet`), QC agent có thể bị lúng túng và tự nghĩ ra lệnh khác. Fix: prompt t5 phải có chỉ thị tường minh — *"Mọi lệnh thực thi đã được Architect cung cấp sẵn. Bạn không cần biết cách dùng tool đó. Chỉ cần: (1) chạy đúng lệnh được cho, (2) đọc stdout/stderr, (3) kết luận dựa trên output thực tế."* — xem S5-3.
+
+#### Thay đổi kiến trúc JSON (t3 output)
+
+```json
+[
+  {"name": "src/app.js", "description": "Entry point"},
+  {"name": "Dockerfile.checker", "description": "Môi trường kiểm tra"}
+]
+```
+→ thêm field `qa_suite` ngang hàng với mảng file:
+```json
+{
+  "files": [
+    {"name": "src/app.js", "description": "Entry point"},
+    {"name": "Dockerfile.checker", "description": "Môi trường kiểm tra"}
+  ],
+  "qa_suite": {
+    "syntax_cmd": "node --check src/js/*.js",
+    "lint_cmd":   "eslint src/js/ --format compact",
+    "test_cmd":   ""
+  }
+}
+```
+`main.py` parse cả `files` lẫn `qa_suite`; truyền `qa_suite` vào t5 prompt theo dạng placeholder.
+
+| # | Thời gian | Việc cần làm | File | Status |
+|---|-----------|--------------|------|--------|
+| S5-1 | 20p | **t3 JSON schema mở rộng**: sửa t3 prompt trong `tasks.py` — yêu cầu Architect xuất JSON object gốc với 2 key: `"files"` (mảng như cũ) và `"qa_suite"` (`syntax_cmd`, `lint_cmd`, `test_cmd`). Nếu không có lệnh nào, để chuỗi rỗng `""`. Thêm example output vào prompt. | `tasks.py` | 🔄 |
+| S5-2 | 20p | **`_parse_file_inventory` → `_parse_t3_output`**: sửa hàm `_parse_file_inventory` trong `main.py` — nếu JSON root là object → lấy `root["files"]` + `root["qa_suite"]`; nếu root là array → fallback như cũ (`qa_suite` mặc định rỗng). Trả về `(file_list, qa_suite_dict)`. Cập nhật tất cả caller. | `main.py` | 🔄 |
+| S5-3 | 15p | **t5 dynamic prompt**: trong `_run_dev_pipeline`, thay toàn bộ đoạn hardcode `node --check`, `eslint` trong `t5_desc` bằng `{syntax_cmd}` / `{lint_cmd}` / `{test_cmd}` đọc từ `qa_suite`. Thêm rule: nếu cmd rỗng → bỏ qua bước đó. **Bắt buộc thêm chỉ thị chống "QC sáng tạo":** `"⚠️ Mọi lệnh thực thi đã được Architect cung cấp sẵn trong kiến trúc. Bạn không cần biết cách dùng tool đó. Chỉ cần: (1) chạy ĐÚNG lệnh được cho, (2) đọc stdout/stderr nguyên văn, (3) kết luận dựa trên output thực tế — không tự suy diễn hay thay lệnh khác."` | `main.py` | 🔄 |
+| S5-4 | 15p | **Dynamic whitelist**: trong `ExecutionCheckerTool._run()`, thay `_EXEC_WHITELIST` frozen hardcode bằng module-level `set` có thể được mở rộng. Thêm hàm `register_qa_commands(qa_suite: dict)` trong `tools.py` — extract tên binary từ `syntax_cmd`/`lint_cmd`/`test_cmd` (token đầu tiên) và add vào whitelist. Gọi sau khi parse `qa_suite` xong. | `tools.py`, `main.py` | 🔄 |
+| S5-5 | 20p | **Fallback Dockerfile `is_frontend`-aware**: trong `main.py`, thay `_FALLBACK_DOCKERFILE` đơn lẻ bằng dict `_FALLBACK_DOCKERFILES = {"frontend": "...", "backend": "...", "generic": "..."}`. `frontend`: Node 20 + eslint + stylelint. `backend`: Python 3.11 + pytest + pylint. `generic`: `debian:bookworm-slim` + `build-essential` + curl. `_ensure_checker_image` chọn theo `is_frontend` khi `Dockerfile.checker` không có trong src/. | `main.py` | 🔄 |
+
+**Done khi:**
+- Log hiện `[qa_suite] syntax=node --check src/js/*.js lint=eslint ...` (hoặc tương đương với ngôn ngữ khác).
+- Xóa hết chữ `node`, `eslint`, `pytest` khỏi `tasks.py` t5 section — không còn hardcode nào.
+- Chạy pipeline với project Python thuần → t5 dùng `python -m py_compile` + `pylint` đúng như Architect định nghĩa.
+
+---
+
 ## Verification
 
 **Phase 1–2 (đã done):**
