@@ -8,6 +8,7 @@ anyio==4.12.1
 appdirs==1.4.4
 attrs==25.4.0
 backoff==2.2.1
+python-telegram-bot>=20.0
 bcrypt==5.0.0
 beautifulsoup4==4.13.5
 build==1.4.0

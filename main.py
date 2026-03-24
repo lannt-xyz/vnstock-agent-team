@@ -4,6 +4,7 @@ import re
 import json
 import subprocess
 import traceback
+from collections.abc import Callable
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from crewai import Crew, Process
@@ -516,7 +517,8 @@ def _sanitize_filename(name: str) -> str:
 
 
 def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
-                      request, previous_result, is_frontend, cycle: int = 1) -> str:
+                      request, previous_result, is_frontend, cycle: int = 1,
+                      progress_callback: Callable[[str, str], None] | None = None) -> str:
     """Step-by-step pipeline with QC retry loop.
     - t3 (Architect) runs once.
     - t4 (Coder) → t5 (QC) loop up to MAX_QC_RETRIES times.
@@ -524,6 +526,13 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
     - t6 (Reviewer) and t7 (PM) run once after the QC loop.
     """
     global _rag_enabled
+
+    def _cb(event: str, detail: str = "") -> None:
+        if progress_callback:
+            try:
+                progress_callback(event, detail)
+            except Exception:
+                pass
 
     def read(rel: str) -> str:
         p = WORKSPACE_ROOT / rel
@@ -547,6 +556,7 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
             for p in (WORKSPACE_ROOT / "src").rglob("*") if p.is_file()
         }
         _log(f"[investigation] Current State: {len(existing_src_files)} file(s) found in src/")
+        _cb("task_start", "tI")
         audit_report = _run_single_task(
             architect,
             f"[CODEBASE HIỆN TẠI]\n{snapshot}\n\n"
@@ -561,6 +571,7 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
             "reports/t0_codebase_audit.md",
         )
         _log("[investigation] tI done → t0_codebase_audit.md")
+        _cb("task_done", "tI")
         audit_summary = audit_report[:1500] if audit_report else snapshot[:1500]
         snapshot_block = (
             f"[HIỆN TRẠNG CODEBASE]\n{audit_summary}\n\n"
@@ -575,6 +586,7 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
         )
 
     # ── t3: Architect ──────────────────────────────────────────────────────────
+    _cb("task_start", "t3")
     t3 = _run_single_task(
         architect,
         f"{snapshot_block}"
@@ -606,6 +618,7 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
         "reports/t3_architecture.md",
     )
     _log("[pipeline] t3 done")
+    _cb("task_done", "t3")
 
     # Parse file inventory à qa_suite từ t3 Architect output
     file_inventory, qa_suite = _parse_file_inventory(t3)
@@ -624,6 +637,7 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
 
     for qc_attempt in range(1, MAX_QC_RETRIES + 1):
         _log(f"[pipeline] QC attempt {qc_attempt}/{MAX_QC_RETRIES}")
+        _cb("qc_attempt", f"{qc_attempt}/{MAX_QC_RETRIES}")
 
         # Build feedback block
         feedback_block = ""
@@ -641,6 +655,7 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
                 )
 
         # ── t4: Coder (per-file or single-shot) ───────────────────────────────
+        _cb("task_start", "t4")
         if file_inventory:
             t4_outputs = []
             for file_spec in file_inventory:
@@ -675,6 +690,7 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
                     f"reports/t4_{_sanitize_filename(fname)}.md",
                 ))
                 _log(f"[pipeline] t4 file done: {fname} (attempt {qc_attempt})")
+                _cb("file_done", fname)
             t4_raw = "\n\n".join(t4_outputs)
         else:
             t4_raw = _run_single_task(
@@ -695,6 +711,7 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
                 "reports/t4_code_summary.md",
             )
             _log(f"[pipeline] t4 done single-shot (attempt {qc_attempt})")
+        _cb("task_done", "t4")
 
         # Write source files
         written = _extract_and_write_src(t4_raw)
@@ -750,6 +767,7 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
                 "2. Kiểm tra bảo mật và logic.\n"
                 "Kết luận: PASS hoặc FAIL kèm output thực tế."
             )
+        _cb("task_start", "t5")
         t5 = _run_single_task(qc, t5_desc, "PASS hoặc FAIL kèm output thực tế.", "reports/t5_qc_report.md")
         _log(f"[pipeline] t5 done (attempt {qc_attempt})")
 
@@ -763,12 +781,15 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
 
         if verdict == "PASS":
             _log(f"[pipeline] QC PASS on attempt {qc_attempt}")
+            _cb("task_done", "t5")
             break
         if qc_attempt < MAX_QC_RETRIES:
             qc_feedback = t5[:1500]
             _log(f"[pipeline] QC FAIL — retry {qc_attempt + 1}/{MAX_QC_RETRIES}")
+            _cb("qc_fail", t5[:500])
         else:
             _log(f"[pipeline] QC still FAIL after {MAX_QC_RETRIES} attempts — continuing to t6")
+            _cb("qc_fail", t5[:500])
 
     # Save QC history to state.json
     existing_state = _load_state()
@@ -776,6 +797,7 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
     _save_state(existing_state)
 
     # ── t6: Reviewer ──────────────────────────────────────────────────────────
+    _cb("task_start", "t6")
     rag_hint_t6 = (
         "Dùng 'Search Codebase' để tra cứu, sau đó Read File để đọc toàn file khi cần."
         if _rag_enabled else
@@ -800,8 +822,10 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
         "reports/t6_review.md",
     )
     _log("[pipeline] t6 done")
+    _cb("task_done", "t6")
 
     # ── t7: PM Final Report ────────────────────────────────────────────────────
+    _cb("task_start", "t7")
     t7 = _run_single_task(
         pm,
         f"Tóm tắt:\n- File tạo: {src_files}\n"
@@ -814,6 +838,8 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
         "reports/t7_final_report.md",
     )
     _log("[pipeline] t7 done")
+    _cb("task_done", "t7")
+    _cb("done", str(len(src_files)))
 
     # Stop Docker checker container (cleanup after QC loop is done)
     if container_name:
