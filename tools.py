@@ -262,16 +262,35 @@ checker_container: str | None = None  # container name; None = use local exec
 
 
 # ── Tool: Execution Checker ────────────────────────────────────────────────────
-_EXEC_WHITELIST: frozenset = frozenset({"eslint", "stylelint", "node", "pytest", "pylint"})
+# Base whitelist — extended per-project via register_qa_commands()
+_EXEC_WHITELIST: set = {"eslint", "stylelint", "node", "pytest", "pylint", "python"}
 _EXEC_FORBIDDEN: tuple = (";", "&&", "||", "`", "$(")
+
+
+def register_qa_commands(qa_suite: dict) -> None:
+    """Extract binary names from qa_suite and add to _EXEC_WHITELIST.
+    Called after _parse_file_inventory to whitelist project-specific commands.
+    """
+    import shlex as _shlex
+    for cmd_str in qa_suite.values():
+        if not cmd_str:
+            continue
+        try:
+            tokens = _shlex.split(str(cmd_str))
+        except ValueError:
+            continue
+        if tokens:
+            binary = os.path.basename(tokens[0])
+            if binary:
+                _EXEC_WHITELIST.add(binary)
 
 
 class _ExecInput(BaseModel):
     command: str = Field(
         ...,
         description=(
-            "Command to run. First token must be one of: "
-            "eslint, stylelint, node, pytest, pylint. "
+            "Command to run. First token must be a binary in the allowed list "
+            "(configured by Architect's qa_suite, e.g. node, eslint, pytest, pylint, cargo, go). "
             "Shell operators (; && || | ` $() are forbidden)."
         ),
     )
@@ -281,7 +300,7 @@ class ExecutionCheckerTool(BaseTool):
     name: str = "Run Checks"
     description: str = (
         f"Run syntax/lint/test checks inside the workspace ({WORKSPACE_ROOT}). "
-        "Allowed commands: eslint, stylelint, node --check, pytest, pylint. "
+        "Run EXACTLY the commands provided by the Architect in qa_suite — do not substitute or invent alternatives. "
         "Wildcards (*.js) are auto-expanded. Shell operators are blocked for security."
     )
     args_schema: Type[BaseModel] = _ExecInput

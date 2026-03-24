@@ -209,8 +209,9 @@ def _run_single_task(agent, description: str, expected_output: str, out_rel: str
     return out_path.read_text("utf-8") if out_path.exists() else ""
 
 
-# ── Docker fallback Dockerfile (used when Architect doesn't generate one) ────
-_FALLBACK_DOCKERFILE = """\
+# ── Docker fallback Dockerfiles (3-tier: frontend / backend / generic) ────────────────
+_FALLBACK_DOCKERFILES: dict = {
+    "frontend": """\
 FROM python:3.11-slim
 
 # Node.js 20
@@ -228,18 +229,43 @@ RUN pip install --no-cache-dir pytest pylint
 RUN useradd -m checker
 USER checker
 WORKDIR /workspace
-"""
+""",
+    "backend": """\
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir pytest pylint black mypy
+
+# Non-root user for security
+RUN useradd -m checker
+USER checker
+WORKDIR /workspace
+""",
+    "generic": """\
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y build-essential curl python3 python3-pip nodejs npm && \\
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g eslint && pip3 install --no-cache-dir pytest pylint
+
+# Non-root user for security
+RUN useradd -m checker
+USER checker
+WORKDIR /workspace
+""",
+}
 
 
-def _ensure_checker_image(cycle: int) -> str:
+def _ensure_checker_image(cycle: int, is_frontend: bool = True) -> str:
     """Build Docker image from Dockerfile.checker (fallback to hardcoded if missing).
     Returns image tag on success, '' on failure (caller uses local exec).
     """
     tag = f"project-checker:{cycle}"
     dockerfile = WORKSPACE_ROOT / "Dockerfile.checker"
     if not dockerfile.exists():
-        dockerfile.write_text(_FALLBACK_DOCKERFILE, encoding="utf-8")
-        _log("[docker] Dockerfile.checker missing — wrote hardcoded fallback")
+        fallback_key = "frontend" if is_frontend else "backend"
+        dockerfile.write_text(_FALLBACK_DOCKERFILES[fallback_key], encoding="utf-8")
+        _log(f"[docker] Dockerfile.checker missing — wrote '{fallback_key}' fallback")
     try:
         result = subprocess.run(
             ["docker", "build", "-t", tag, "-f", str(dockerfile), str(WORKSPACE_ROOT)],
@@ -361,30 +387,42 @@ def _sort_file_inventory(files: list[dict]) -> list[dict]:
     return sorted(files, key=key)
 
 
-def _parse_file_inventory(t3_output: str) -> list[dict]:
-    """Extract file list from Architect JSON block. 3-layer fallback.
-    Returns [] to signal single-shot fallback when all layers fail.
+def _parse_file_inventory(t3_output: str) -> tuple[list[dict], dict]:
+    """Extract file list and qa_suite from Architect JSON block. 3-layer fallback.
+    Handles both old array format and new object format {"files": [...], "qa_suite": {...}}.
+    Returns ([], {}) to signal single-shot fallback when all layers fail.
     """
+    _EMPTY: tuple[list[dict], dict] = ([], {})
+
+    def _extract(data) -> tuple[list[dict], dict]:
+        if isinstance(data, list):
+            return data, {}
+        if isinstance(data, dict):
+            files = data.get("files", [])
+            qa = data.get("qa_suite", {})
+            return (files if isinstance(files, list) else []), (qa if isinstance(qa, dict) else {})
+        return [], {}
+
     match = _JSON_BLOCK_RE.search(t3_output)
     if not match:
         _log("[inventory] No JSON block found — single-shot fallback")
-        return []
+        return _EMPTY
 
     raw = match.group(1).strip()
     _log(f"[inventory] raw block preview: {raw[:200]}")
+
+    # Layer 1: json.loads
     try:
-        data = json.loads(raw)
-        if isinstance(data, list):
-            return _sort_file_inventory(data)
+        files, qa = _extract(json.loads(raw))
+        return _sort_file_inventory(files), qa
     except json.JSONDecodeError:
         pass
 
     # Layer 2: ast.literal_eval (handles trailing comma, single quotes)
     try:
-        data = ast.literal_eval(raw)
-        if isinstance(data, list):
-            _log("[inventory] json.loads failed, ast.literal_eval succeeded")
-            return _sort_file_inventory(data)
+        files, qa = _extract(ast.literal_eval(raw))
+        _log("[inventory] json.loads failed, ast.literal_eval succeeded")
+        return _sort_file_inventory(files), qa
     except Exception:
         pass
 
@@ -394,20 +432,19 @@ def _parse_file_inventory(t3_output: str) -> list[dict]:
         from langchain_core.messages import HumanMessage  # noqa: PLC0415
         repair_llm = llm_factory.get_flash_model()
         response = repair_llm.invoke([HumanMessage(
-            content=f"Fix this JSON so it's valid. Return ONLY the JSON array, no explanation:\n{raw}"
+            content=f"Fix this JSON so it's valid. Return ONLY the JSON (array or object), no explanation:\n{raw}"
         )])
         repair_text = str(response.content if hasattr(response, "content") else response).strip()
         repair_text = re.sub(r"^```[^\n]*\n?", "", repair_text)
         repair_text = re.sub(r"\n?```$", "", repair_text).strip()
-        data = json.loads(repair_text)
-        if isinstance(data, list):
-            _log("[inventory] LLM JSON repair succeeded")
-            return _sort_file_inventory(data)
+        files, qa = _extract(json.loads(repair_text))
+        _log("[inventory] LLM JSON repair succeeded")
+        return _sort_file_inventory(files), qa
     except Exception as exc:
         _log(f"[inventory] LLM repair failed: {exc}")
 
     _log("[inventory] All parsing layers failed — single-shot fallback")
-    return []
+    return _EMPTY
 
 
 def _sanitize_filename(name: str) -> str:
@@ -444,25 +481,36 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
         "2. Liệt kê TẤT CẢ file cần tạo: đường dẫn src/... và mô tả nội dung.\n"
         "3. Design Pattern và lý do.\n"
         "4. Data flow giữa các thành phần.\n\n"
-        "SAU PHẦN MÔ TẢ KIẾN TRÚC, xuất danh sách file theo đúng format sau:\n"
+        "SAU PHẦN MÔ TẢ KIẼN TRÚC, xuất JSON duy nhất theo đúng format sau:\n"
         "```json\n"
-        "[\n"
-        '  {"name": "src/config.js", "description": "Cấu hình API keys và constants"},\n'
-        '  {"name": "src/app.js",    "description": "Entry point, khởi tạo app"}\n'
-        "]\n"
+        "{\n"
+        '  "files": [\n'
+        '    {"name": "src/config.js", "description": "Cấu hình API keys và constants"},\n'
+        '    {"name": "src/app.js",    "description": "Entry point, khởi tạo app"},\n'
+        '    {"name": "Dockerfile.checker", "description": "Docker QC environment"}\n'
+        '  ],\n'
+        '  "qa_suite": {\n'
+        '    "syntax_cmd": "node --check src/js/*.js",\n'
+        '    "lint_cmd":   "eslint src/js/ --format compact",\n'
+        '    "test_cmd":   ""\n'
+        '  }\n'
+        "}\n"
         "```\n"
-        "Không thêm text ngoài JSON block này.",
+        "⚠️ BẮT BUỘC: Chỉ xuất JSON object này, không thêm text sau JSON.\n"
+        "⚠️ `qa_suite`: điền lệnh phù hợp với tech stack đã thiết kế. Để chuỗi rỗng nếu không có lệnh tương ứng.",
         "Danh sách file src/..., tech stack, design pattern, data flow, và JSON block.",
         "reports/t3_architecture.md",
     )
     _log("[pipeline] t3 done")
 
-    # Parse file inventory cho per-file mode
-    file_inventory = _parse_file_inventory(t3)
+    # Parse file inventory à qa_suite từ t3 Architect output
+    file_inventory, qa_suite = _parse_file_inventory(t3)
     _log(
         f"[pipeline] file_inventory: {len(file_inventory)} file(s) "
         f"{'(per-file mode)' if file_inventory else '(single-shot fallback)'}"
     )
+    _log(f"[qa_suite] syntax={qa_suite.get('syntax_cmd', '')} | lint={qa_suite.get('lint_cmd', '')} | test={qa_suite.get('test_cmd', '')}")
+    _tools_mod.register_qa_commands(qa_suite)
 
     # ── QC retry loop: t4 → t5 ────────────────────────────────────────────────
     qc_feedback = ""
@@ -540,8 +588,7 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
 
         # On first QC attempt: build Docker checker image (Dockerfile.checker written by Coder)
         if qc_attempt == 1 and not container_name:
-            import tools as _tools_mod
-            image_tag = _ensure_checker_image(cycle)
+            image_tag = _ensure_checker_image(cycle, is_frontend)
             if image_tag:
                 container_name = _start_checker_container(image_tag, cycle)
                 _tools_mod.checker_container = container_name
@@ -657,7 +704,6 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
     # Stop Docker checker container (cleanup after QC loop is done)
     if container_name:
         _stop_checker_container(container_name)
-        import tools as _tools_mod
         _tools_mod.checker_container = None
 
     return t7
@@ -784,7 +830,6 @@ if __name__ == "__main__":
         except Exception as exc:
             _log(f"=== CYCLE {cycle} FAILED: {exc} ===")
             traceback.print_exc()
-            import tools as _tools_mod
             if _tools_mod.checker_container:
                 _stop_checker_container(_tools_mod.checker_container)
                 _tools_mod.checker_container = None

@@ -73,16 +73,23 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             "3. Danh sách TẤT CẢ file cần tạo với đường dẫn 'src/...' và mô tả nội dung.\n"
             "4. Design Pattern và lý do.\n"
             "5. Data flow giữa các module.\n\n"
-            "SAU PHẦN MÔ TẢ KIẾN TRÚC, xuất danh sách file theo đúng format sau:\n"
+            "SAU PHẦN MÔ TẢ KIẼN TRÚC, xuất JSON duy nhất theo đúng format sau:\n"
             "```json\n"
-            "[\n"
-            '  {"name": "src/config.js", "description": "Cấu hình API keys và constants"},\n'
-            '  {"name": "src/app.js",    "description": "Entry point, khởi tạo app"}\n'
-            "]\n"
+            "{\n"
+            '  "files": [\n'
+            '    {"name": "src/config.js", "description": "Cấu hình API keys và constants"},\n'
+            '    {"name": "src/app.js",    "description": "Entry point, khởi tạo app"},\n'
+            '    {"name": "Dockerfile.checker", "description": "Docker QC environment — cài đủ runtime và linter phù hợp tech stack"}\n'
+            '  ],\n'
+            '  "qa_suite": {\n'
+            '    "syntax_cmd": "<lệnh kiểm tra syntax phù hợp tech stack, vd: node --check src/js/*.js>",\n'
+            '    "lint_cmd":   "<lệnh lint, vd: eslint src/js/ --format compact>",\n'
+            '    "test_cmd":   "<lệnh test, vd: pytest tests/ hoặc chuỗi rỗng nếu không có>"\n'
+            '  }\n'
+            "}\n"
             "```\n"
-            "⚠️ BẮT BUỘC: Kết thúc response bằng JSON block trên. Không thêm text nào sau JSON.\n"
-            "⚠️ BẮT BUỘC: Thêm MỘT ENTRY cho file 'Dockerfile.checker' vào JSON inventory:\n"
-            '  {"name": "Dockerfile.checker", "description": "Docker QC environment — cài đủ runtime và linter phù hợp tech stack"}'
+            "⚠️ BẮT BUỘC: Chỉ xuất JSON object này, không thêm text sau JSON.\n"
+            "⚠️ `qa_suite`: điền lệnh phù hợp với tech stack đã thiết kế. Để chuỗi rỗng nếu không có lệnh tương ứng."
         ),
         agent=architect,
         context=[t1, t2],
