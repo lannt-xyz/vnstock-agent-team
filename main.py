@@ -79,14 +79,27 @@ def _save_state(data: dict) -> None:
 # DeepSeek sometimes outputs ReAct JSON in the Final Answer text instead of
 # actually calling the tool through the framework.  We intercept and replay it.
 
+_SRC_EXTS = frozenset({
+    '.html', '.css', '.js', '.ts', '.jsx', '.tsx', '.vue', '.mjs', '.cjs', '.scss', '.sass', '.less'
+})
+
+
 def _normalize_path(raw: str) -> str:
-    """Strip workspace/ prefix so safe_file_write gets a clean relative path."""
+    """Strip workspace/ prefix and force src/ for bare web source filenames."""
     cleaned = raw.strip().strip('"').strip("'")
     for prefix in ("workspace/", "./workspace/"):
         if cleaned.startswith(prefix):
             cleaned = cleaned[len(prefix):]
             break
-    return cleaned
+    p = os.path.normpath(cleaned)
+    # Has directory component → respect it (src/, reports/, tests/, etc.)
+    if os.path.dirname(p):
+        return p
+    # Bare filename: force into src/ for web source file types
+    _, ext = os.path.splitext(p)
+    if ext.lower() in _SRC_EXTS:
+        return 'src/' + p
+    return p
 
 
 def _extract_json_objects(text: str) -> list:
@@ -387,6 +400,56 @@ def _sort_file_inventory(files: list[dict]) -> list[dict]:
     return sorted(files, key=key)
 
 
+_SNAP_DEP_PAT = re.compile(
+    r'^\s*(?:<(?:link|script)|import\s|export\s|require\s*\()',
+    re.IGNORECASE,
+)
+
+
+def _build_codebase_snapshot() -> str:
+    """Scan src/ and return file tree + dependency map (lines with import/link/require).
+    Returns empty string if src/ is empty or missing.
+    """
+    src_dir = WORKSPACE_ROOT / "src"
+    if not src_dir.exists():
+        return ""
+
+    all_files = sorted(
+        p.relative_to(WORKSPACE_ROOT).as_posix()
+        for p in src_dir.rglob("*") if p.is_file()
+    )
+    if not all_files:
+        return ""
+
+    lines = [f"## SRC/ FILE TREE ({len(all_files)} file(s))"]
+    lines += [f"  {f}" for f in all_files]
+    lines.append("")
+
+    def _priority(rel: str) -> int:
+        base = os.path.basename(rel).lower()
+        if "index.html" in base:
+            return 0
+        if base.startswith("config"):
+            return 1
+        if "package.json" in base:
+            return 2
+        return 3
+
+    priority_files = sorted(all_files, key=_priority)[:8]
+    lines.append("## DEPENDENCY MAP (key files)")
+    for rel in priority_files:
+        try:
+            content = (WORKSPACE_ROOT / rel).read_text("utf-8", errors="replace")
+            dep_lines = [ln for ln in content.splitlines() if _SNAP_DEP_PAT.search(ln)][:40]
+            if dep_lines:
+                lines.append(f"\n### {rel}")
+                lines.extend(dep_lines)
+        except Exception:
+            pass
+
+    return "\n".join(lines)
+
+
 def _parse_file_inventory(t3_output: str) -> tuple[list[dict], dict]:
     """Extract file list and qa_suite from Architect JSON block. 3-layer fallback.
     Handles both old array format and new object format {"files": [...], "qa_suite": {...}}.
@@ -472,9 +535,49 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
     t1 = read("reports/t1_task_plan.md")
     t2 = read("reports/t2_plan_review.md")
 
+    # ── tI: Investigation (when src/ already has files) ───────────────────────
+    snapshot = _build_codebase_snapshot()
+    existing_src_files: set[str] = set()
+    audit_report = ""
+    snapshot_block = ""
+    constraint_block = ""
+    if snapshot:
+        existing_src_files = {
+            p.relative_to(WORKSPACE_ROOT).as_posix()
+            for p in (WORKSPACE_ROOT / "src").rglob("*") if p.is_file()
+        }
+        _log(f"[investigation] Current State: {len(existing_src_files)} file(s) found in src/")
+        audit_report = _run_single_task(
+            architect,
+            f"[CODEBASE HIỆN TẠI]\n{snapshot}\n\n"
+            "Nhiệm vụ Investigation:\n"
+            "1. Liệt kê cấu trúc thư mục thực tế của src/\n"
+            "2. Dùng Read File đọc src/index.html — xác định CSS/JS đang được link\n"
+            "3. Xác định tech stack thực tế đang dùng\n"
+            "4. Phát hiện mâu thuẫn: file được link nhưng không tồn tại, hoặc ngược lại\n"
+            "5. Đề xuất: file nào cần giữ nguyên, file nào cần sửa, file nào cần tạo mới\n\n"
+            "Xuất Current State Report dưới dạng markdown.",
+            "Current State Report với cấu trúc thư mục, tech stack, và đề xuất.",
+            "reports/t0_codebase_audit.md",
+        )
+        _log("[investigation] tI done → t0_codebase_audit.md")
+        audit_summary = audit_report[:1500] if audit_report else snapshot[:1500]
+        snapshot_block = (
+            f"[HIỆN TRẠNG CODEBASE]\n{audit_summary}\n\n"
+            "Chi tiết tại: reports/t0_codebase_audit.md\n\n"
+        )
+        constraint_block = (
+            "\n⚠️ RÀNG BUỘC BẮT BUỘC (khi src/ đã có file):\n"
+            "① CHỈ liệt kê vào `files` những file cần TẠO MỚI hoặc CẦN SỬA.\n"
+            "   Mọi src/ path PHẢI khớp tên file thực từ Current State Report.\n"
+            "② Nếu định thay đổi file đã tồn tại, BẮT BUỘC giải thích TẠI SAO\n"
+            "   trong `description` — file đó đang có vấn đề gì cụ thể.\n"
+        )
+
     # ── t3: Architect ──────────────────────────────────────────────────────────
     t3 = _run_single_task(
         architect,
+        f"{snapshot_block}"
         f"[KẾ HOẠCH]\n{t1[:3000]}\n\n[REVIEW]\n{t2[:1500]}\n\n"
         "Thiết kế kiến trúc:\n"
         "1. Tech stack: HTML + JavaScript + Google Sheets API — KHÔNG backend.\n"
@@ -497,7 +600,8 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
         "}\n"
         "```\n"
         "⚠️ BẮT BUỘC: Chỉ xuất JSON object này, không thêm text sau JSON.\n"
-        "⚠️ `qa_suite`: điền lệnh phù hợp với tech stack đã thiết kế. Để chuỗi rỗng nếu không có lệnh tương ứng.",
+        "⚠️ `qa_suite`: điền lệnh phù hợp với tech stack đã thiết kế. Để chuỗi rỗng nếu không có lệnh tương ứng."
+        + constraint_block,
         "Danh sách file src/..., tech stack, design pattern, data flow, và JSON block.",
         "reports/t3_architecture.md",
     )
@@ -542,13 +646,23 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
             for file_spec in file_inventory:
                 fname = file_spec.get("name", "")
                 fdesc = file_spec.get("description", "")
+                # S6-4: modify mode for files that already existed in src/
+                modify_note = ""
+                if fname in existing_src_files:
+                    modify_note = (
+                        "\n\n⚠️ FILE NÀY ĐÃ TỒN TẠI. Giữ nguyên:\n"
+                        "- Tên CSS class và JS function đang được dùng ở file khác\n"
+                        "- Cấu trúc tổng thể\n"
+                        "Chỉ thêm/sửa phần liên quan đến yêu cầu mới. Không refactor toàn bộ."
+                    )
                 t4_outputs.append(_run_single_task(
                     coder,
                     f"[KIẾN TRÚC]\n{t3[:2000]}\n\n"
                     f"Viết DUY NHẤT file này:\n"
                     f"Tên: {fname}\n"
-                    f"Mục đích: {fdesc}\n\n"
-                    f"QUY TẮC BẮT BUỘC:\n"
+                    f"Mục đích: {fdesc}\n"
+                    + modify_note +
+                    "\n\nQUY TẮC BẮT BUỘC:\n"
                     f"- Dùng ES6 Modules (export/import). KHÔNG khai báo biến global (window/global/var ở module scope).\n"
                     f"- Mọi dependency dùng import từ file khác.\n"
                     f"- Nội dung thực tế, đầy đủ — không placeholder, không TODO.\n"
