@@ -68,8 +68,8 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
         description=(
             "Dùng Read File đọc 'reports/t1_task_plan.md' và 'reports/t2_plan_review.md'.\n"
             "Xuất thiết kế kiến trúc gồm:\n"
-            "1. Tech stack TRỰC TIẾP từ yêu cầu — web app Google Sheets → HTML+JS+Google Sheets API.\n"
-            "2. Thiết kế theo chuẩn ES Modules hiện đại — mỗi file là một module độc lập với export/import rõ ràng. Không dùng global namespace hay window object.\n"
+            "1. Tech stack TRỰC TIẾP từ yêu cầu — xác định ngôn ngữ, framework và thư viện phù hợp nhất.\n"
+            "2. Thiết kế theo chuẩn module hiện đại của ngôn ngữ/framework đã chọn — tách biệt trách nhiệm rõ ràng (separation of concerns), không dùng global state nếu không cần thiết.\n"
             "3. Danh sách TẤT CẢ file cần tạo với đường dẫn 'src/...' và mô tả nội dung.\n"
             "4. Design Pattern và lý do.\n"
             "5. Data flow giữa các module.\n\n"
@@ -124,41 +124,27 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
         output_file=f"{_WS_REL}/reports/t4_code_summary.md",
     )
 
-    if is_frontend:
-        t5_desc = (
-            "Kiểm tra chất lượng code frontend do Coder viết.\n"
-            "TRÌNH TỰ BẮt BUỘC:\n"
-            "1. Dùng 'Run Checks' với lệnh: node --check src/js/*.js\n"
-            "   (bỏ qua nếu không có Node.js — ghi rõ trong báo cáo)\n"
-            "2. Dùng 'Run Checks' với lệnh: eslint src/js/ --format compact\n"
-            "   (bỏ qua nếu eslint chưa cài — ghi rõ trong báo cáo)\n"
-            "3. Dùng Read File đọc các file src/ và kiểm tra:\n"
-            "   - HTML: DOCTYPE, charset, thẻ đóng/mở đúng.\n"
-            "   - Bảo mật: không hardcode API key, không XSS rõ ràng.\n"
-            "   - Responsive: meta viewport, CSS media query.\n"
-            "4. Kết luận PASS chỉ khi bước 1+2 không có syntax error.\n"
-            "QUAN TRỌNG — Nếu output tool bắt đầu bằng [TOOL_NOT_INSTALLED]:\n"
-            "  → Ghi chú vào báo cáo: '<tool>: not installed — bỏ qua'\n"
-            "  → KHÔNG tính là FAIL. Chỉ FAIL khi tool chạy được và output chứa lỗi thật.\n"
-            "Xuất báo cáo: PASS hoặc FAIL kèm stdout thực tế từ tool."
-        )
-        t5_expected = "Báo cáo QC: PASS hoặc FAIL kèm output thực tế từ node/eslint."
-    else:
-        t5_desc = (
-            "Kiểm thử toàn bộ code do Coder viết:\n"
-            "1. Viết Unit Test, lưu vào 'tests/test_*.py' (không lưu vào thư mục gốc).\n"
-            "2. Chạy pytest, ghi lại toàn bộ output.\n"
-            "3. Nếu có test FAIL: ghi rõ nguyên nhân.\n"
-            "4. Chỉ kết luận PASS khi 100% test xanh.\n"
-            "5. Kiểm tra thêm: lỗi bảo mật, lỗi logic, vấn đề hiệu năng.\n"
-            "Xuất báo cáo kết quả pytest."
-        )
-        t5_expected = "Báo cáo pytest (pass/fail) và xác nhận 100% pass."
+    t5_desc = (
+        "Kiểm tra chất lượng code do Coder viết.\n"
+        "TRÌNH TỰ BẮt BUỘC:\n"
+        "1. Dùng Read File đọc 'reports/t3_architecture.md', tìm JSON block chứa 'qa_suite'.\n"
+        "   Lấy các giá trị: syntax_cmd, lint_cmd, test_cmd.\n"
+        "2. Với mỗi lệnh không rỗng, dùng 'Run Checks' để chạy và ghi lại toàn bộ output thực tế.\n"
+        "3. Dùng Read File đọc các file src/ kiểm tra thêm:\n"
+        "   - Bảo mật: không hardcode secret, không injection rõ ràng.\n"
+        "   - Logic: không có code thừa, dead code.\n"
+        "4. Kết luận PASS chỉ khi mọi lệnh chạy được đều không báo error/lỗi.\n"
+        "QUAN TRỌNG — Nếu output tool bắt đầu bằng [TOOL_NOT_INSTALLED]:\n"
+        "  → Ghi chú vào báo cáo: '<tool>: not installed — bỏ qua'\n"
+        "  → KHÔNG tính là FAIL. Chỉ FAIL khi tool chạy được và output chứa lỗi thật.\n"
+        "Xuất báo cáo: PASS hoặc FAIL kèm stdout thực tế từ các lệnh đã chạy."
+    )
+    t5_expected = "Báo cáo QC: PASS hoặc FAIL kèm output thực tế từ các lệnh qa_suite."
 
     t5 = Task(
         description=t5_desc,
         agent=qc,
-        context=[t4],
+        context=[t3, t4],
         expected_output=t5_expected,
         output_file=f"{_WS_REL}/reports/t5_qc_report.md",
     )
