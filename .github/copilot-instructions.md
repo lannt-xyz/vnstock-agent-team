@@ -1,142 +1,59 @@
-# GitHub Copilot Instructions — my-dev-team
+# 🚀 CrewAI Dev Team: Orchestration Instructions
 
-## Project Overview
+## 1. Mục tiêu hệ thống (System Purpose)
+Bạn là chuyên gia về **CrewAI Framework** và **Google Gemini API**. Nhiệm vụ của bạn là hỗ trợ thiết kế, cấu hình và triển khai đội ngũ AI Agents mô phỏng quy trình Agile (S6 Investigation-First). Hệ thống phải vận hành ổn định trong môi trường **Docker Sandbox** và không được sai sót về đường dẫn (Pathing).
 
-`my-dev-team` is an AI-powered automated development pipeline built with **CrewAI** and **Google Gemini** LLMs. It orchestrates a team of 6 specialized AI agents that collaborate to analyze requirements, design architecture, write code, run QC tests, and produce a final deliverable — all inside a sandboxed `workspace/` directory.
+## 2. Định nghĩa Agent Personas (Tiêu chuẩn 6 Agent)
+| Agent | Role | Goal | LLM Tier |
+| :--- | :--- | :--- | :--- |
+| **PM** | Requirements Analyst | Chốt User Stories & Done Criteria. | Gemini Flash |
+| **Plan Reviewer** | Quality Guard | Review kế hoạch từ PM, chặn đứng thiết kế lỗi. | Gemini Flash |
+| **Architect** | Solution Architect | Thiết kế cấu trúc folder (Force `src/`), chọn Tech Stack. | Gemini Flash |
+| **Coder** | Senior Fullstack | Viết code sạch, xử lý logic, **KHÔNG ghi file rỗng**. | Gemini Pro |
+| **QC** | QA Engineer | Chạy test trong Docker, kiểm tra syntax/lint. | Gemini Pro |
+| **Reviewer** | Senior Reviewer | Đánh giá bảo mật, Clean Code, chốt kết quả cuối. | Gemini Pro |
 
-A **Telegram bot** (`bot.py`) serves as the user-facing dashboard to trigger and monitor pipelines.
+## 3. Quy trình làm việc & Workflow Logic (S6-S7)
+- **Investigation-First (S6):** Luôn chạy Task trinh sát (`tI`) để lấy Codebase Snapshot trước khi Architect (t3) làm việc.
+- **Delta Design:** Architect phải dựa vào Snapshot để giữ nguyên cấu trúc file cũ, chỉ sửa đổi (Modify) thay vì viết lại toàn bộ.
+- **Telegram Dashboard (S7):** Tương tác qua `bot.py` sử dụng `threading` để không block Event Loop của Bot.
 
----
+## 4. Thiết quân luật về Code (Coding Standards - CỰC KỲ QUAN TRỌNG)
+Khi hỗ trợ viết code cho `main.py`, `tasks.py` hoặc `tools.py`, hãy tuân thủ:
 
-## Architecture
+### 🛡️ Path & MIME Safety
+- **Force `src/`:** Mọi file mã nguồn (`.html`, `.js`, `.css`) PHẢI được lưu trong `src/`. Sử dụng `pathlib.Path` để normalize.
+- **Relative Linking:** Trong HTML, các link phải là `href="css/style.css"`, tuyệt đối không dùng path tuyệt đối của Host.
+- **Docker Mapping:** Khi sinh lệnh cho `execution_checker`, phải convert path từ Host (`/home/...`) sang Container Path (`/workspace/...`).
 
-```
-my-dev-team/
-├── main.py          # Entry point: pipeline orchestration, cycle loop, RAG setup
-├── agents.py        # 6 CrewAI agent definitions (PM, PlanReviewer, Architect, Coder, QC, Reviewer)
-├── tasks.py         # 7-task pipeline: t1→t2→t3→t4→t5→t6→t7
-├── tools.py         # Security-filtered custom tools for agents (read/write/search/exec)
-├── utils.py         # LLMFactory with API key rotation (RobustGeminiLLM)
-├── bot.py           # Telegram bot: /dev, /status, /cancel, /push commands
-├── config.js        # Frontend Google API config (workspace output, not agent config)
-├── requirements.txt # Python dependencies
-└── workspace/       # Agent output sandbox (configurable via AGENT_WORKSPACE env var)
-    ├── src/         # Generated source code
-    ├── reports/     # Agent reports (t1–t7 markdown files)
-    └── tests/       # Generated test files
-```
+### 🛡️ Content Integrity (Chống lỗi "None or Empty")
+- **Validation:** Code gọi LLM phải có check `if not response.raw: raise ValueError`.
+- **No Zero-Byte:** Không được ghi file nếu nội dung rỗng. Nếu file quá dài (>3000 tokens), gợi ý chia nhỏ file thay vì để LLM bị cắt cụt.
 
-### Agent Pipeline (6 agents, 7 tasks)
+### 🛡️ CrewAI Best Practices
+- **`allow_delegation=False`:** Giữ luồng chạy tuyến tính, tránh Agent chat vòng vo gây tốn Token.
+- **`memory=False`:** Tránh lỗi khởi tạo VectorDB không cần thiết, ưu tiên truyền Context qua Task.
+- **Output Files:** Sử dụng `output_file` trỏ vào `reports/tN_*.md` để lưu vết log.
 
-| Task | Agent          | Responsibility                                             |
-|------|----------------|------------------------------------------------------------|
-| t1   | PM             | Analyze request → User Stories + Done Criteria + risks     |
-| t2   | Plan Reviewer  | Review & approve PM's plan before execution                |
-| t3   | Architect      | Design directory structure, choose patterns, flag risks    |
-| t4   | Coder          | Write/modify code files per Architect's spec               |
-| t5   | QC             | Write unit tests, run pytest, report failures              |
-| t6   | Reviewer       | Code style, clean code, security review                    |
-| t7   | PM             | Synthesize final report for the user                       |
+## 5. Mẫu cấu trúc Prompt cho Task (Inject vào `tasks.py`)
+> "Dựa trên [HIỆN TRẠNG CODEBASE], hãy thực hiện [NHIỆM VỤ]. 
+> **Ràng buộc:** 1. Không đổi tên file cũ. 2. Code trả về phải đầy đủ, không markdown fences. 3. Nếu file đích là Web, bắt buộc nằm trong `src/`."
 
----
-
-## Key Design Decisions
-
-### LLM Strategy
-- **Flash model** (`get_flash_model`): Used for PM, Plan Reviewer, Architect — fast, cost-efficient tasks.
-- **Pro model** (`get_pro_model`): Used for Coder and QC — complex reasoning required.
-- **Key rotation**: `RobustGeminiLLM` in `utils.py` cycles through `GEMINI_KEY_1..10` on 429/quota errors with exponential backoff.
-
-### Security (tools.py)
-- All agent file I/O is sandboxed inside `WORKSPACE_ROOT` (set via `AGENT_WORKSPACE` env var, defaults to `./workspace`).
-- `_BLOCKED_PATTERNS` in `tools.py` blocks access to `.env`, API keys, certs, `.git`, `venv`, `node_modules`, and IDE files.
-- Never add hardcoded credentials anywhere in source code.
-- The Telegram bot (`bot.py`) restricts commands to `TG_USER_IDS` (allowlist).
-
-### State & Logging
-- Pipeline state is stored in `workspace/state.json`.
-- All pipeline history is written to `workspace/crew_history.log`.
-- Reports are written to `workspace/reports/tN_*.md`.
-
----
-
-## Environment Variables
-
-| Variable           | Required | Description                                      |
-|--------------------|----------|--------------------------------------------------|
-| `GEMINI_KEY_1..10` | Yes      | Gemini API keys (at least 1 required)            |
-| `AGENT_WORKSPACE`  | No       | Absolute path for agent output (default: `./workspace`) |
-| `TG_BOT_TOKEN`     | Bot only | Telegram bot token from BotFather                |
-| `TG_USER_IDS`      | Bot only | Comma-separated allowed Telegram user IDs        |
-| `GIT_AUTHOR_NAME`  | No       | Fallback git author name for `/push` command     |
-| `GIT_AUTHOR_EMAIL` | No       | Fallback git author email for `/push` command    |
-
-Store all secrets in `.env` — never hardcode them.
-
----
-
-## Running the Project
-
-```bash
-# Run the pipeline once (one cycle)
-python main.py
-
-# Run Telegram bot dashboard
-python bot.py
-
-# Run only syntax/compile check
-python -m py_compile tools.py agents.py tasks.py main.py bot.py
+## 🛠️ Ví dụ logic xử lý "Path Ngu" cho Copilot học theo:
+```python
+def safe_file_write(filename: str, content: str):
+    # Quy tắc thép: Luôn chui vào src/ nếu là file code
+    target_path = Path(filename)
+    if target_path.suffix in ['.html', '.js', '.css'] and not str(target_path).startswith('src/'):
+        target_path = Path('src') / target_path
+    
+    # Quy tắc thép: Chống file rỗng
+    if not content or len(content.strip()) < 10:
+        log_error(f"Cảnh báo: Định ghi file {filename} nhưng nội dung rỗng!")
+        return False
+    # ... thực hiện ghi file ...
 ```
 
----
+## 💡 Lưu ý cuối cùng
+- **Chào Sếp!** Luôn bắt đầu mọi phản hồi bằng câu này.
 
-## Code Conventions
-
-### Python
-- Python 3.10+ syntax; use `match/case`, `|` union types, `X | None` over `Optional[X]`.
-- Use `pathlib.Path` everywhere — avoid raw string path manipulation.
-- Load environment variables with `python-dotenv` (`load_dotenv()` at module top).
-- Agents must use tools (e.g., `safe_file_write`) to write files — never print file content to chat.
-- Do not use markdown code fences inside file content written by agents.
-- Keep `max_iter` and `max_rpm` conservative to prevent agent spin loops.
-
-### CrewAI Patterns
-- All agents have `allow_delegation=False` and `memory=False` to keep pipeline deterministic.
-- Tasks use `output_file` with workspace-relative paths (no `workspace/` prefix in the path string — CrewAI resolves relative to `_WS_REL`).
-- Inject `_PATH_NOTE` instruction into task descriptions to enforce correct path format.
-
-### Tools
-- `safe_file_write` / `safe_file_read`: Workspace-sandboxed, security-filtered I/O.
-- `codebase_search`: Semantic search over workspace files (backed by ChromaDB RAG).
-- `execution_checker`: Runs shell commands in a restricted, sandboxed environment.
-- `code_interpreter`: Used only by the Coder agent.
-
-### Frontend Output (workspace/src/)
-- The default `USER_REQUEST` generates a vanilla JS + HTML + CSS Google Sheets quiz app.
-- No build tools — pure browser-native code only.
-- API keys must never be hardcoded; use environment-level injection or a backend proxy.
-
----
-
-## Adding New Agents or Tasks
-
-1. Define the agent in `agents.py` using `Agent(...)` and assign an appropriate LLM tier.
-2. Add the task in `tasks.py` with a clear `description`, `expected_output`, and `output_file`.
-3. Update the `Crew` instantiation in `main.py` to include the new agent and task in order.
-4. Update `TASKS` / `TASK_LABELS` in `bot.py` if the task needs dashboard visibility.
-
----
-
-## Do NOT
-
-- Do not hardcode API keys, tokens, or credentials anywhere.
-- Do not write to paths outside `WORKSPACE_ROOT` from within agents.
-- Do not add markdown fences (` ``` `) to file content written via `safe_file_write`.
-- Do not increase `max_iter` beyond 10 without a documented reason — it causes infinite loops.
-- Do not skip the Plan Reviewer step (t2) — it acts as a guardrail against bad architectures.
-- Do not modify `_BLOCKED_PATTERNS` in `tools.py` to weaken security restrictions.
-- Do not hardcode any stack or architecture assumptions in the agents' prompts — they should be adaptable to any codebase structure.
-
-## Must
-
-- Always response with 'Chào Sếp!' at the beginning of every agent response.
