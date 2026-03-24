@@ -136,3 +136,7 @@ python -m py_compile tools.py agents.py tasks.py main.py bot.py
 - Do not skip the Plan Reviewer step (t2) — it acts as a guardrail against bad architectures.
 - Do not modify `_BLOCKED_PATTERNS` in `tools.py` to weaken security restrictions.
 - Do not hardcode any stack or architecture assumptions in the agents' prompts — they should be adaptable to any codebase structure.
+
+## Must
+
+- Always response with 'Chào Sếp!' at the beginning of every agent response.
