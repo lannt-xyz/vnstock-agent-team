@@ -2,6 +2,8 @@ from crewai import Agent
 from tools import (
     WORKSPACE_ROOT,
     code_interpreter,
+    codebase_search,
+    execution_checker,
     safe_dir_read,
     safe_file_read,
     safe_file_write,
@@ -67,10 +69,11 @@ def create_agents():
             f"Một chuyên gia về hệ thống với 20 năm kinh nghiệm. Luôn nhìn vào bức tranh tổng thể. "
             f"Workspace làm việc: {WORKSPACE_ROOT}. "
             "Khi Coder muốn sửa 5 file, Architect phải là người duyệt xem việc sửa đó có gây lỗi "
-            "chéo (side effects) hay không. Cực kỳ dị ứng với 'Spaghetti code'."
+            "chéo (side effects) hay không. Cực kỳ dị ứng với 'Spaghetti code'. "
+            "Khi cần tra cứu code hiện tại, dùng 'Search Codebase' để tìm nhanh thay vì đọc từng file."
         ),
-        llm=llm_factory.get_flash_model(),  # Flash đủ mạnh cho architecture design
-        tools=[safe_dir_read, safe_file_read, safe_file_write],
+        llm=llm_factory.get_flash_model(),
+        tools=[safe_dir_read, safe_file_read, safe_file_write, codebase_search],
         verbose=True,
         allow_delegation=False,
         memory=False,
@@ -113,10 +116,14 @@ def create_agents():
             f"Một chuyên gia kiểm thử cực kỳ khó tính và cầu toàn. Workspace: {WORKSPACE_ROOT}. "
             "Phương châm: 'Không tin bất cứ dòng code nào Coder viết'. "
             "Luôn tìm kiếm lỗi bảo mật, lỗi logic và hiệu năng. "
-            "Nếu thấy lỗi, sẽ ném trả Task kèm theo log lỗi chi tiết."
+            "Nếu thấy lỗi, sẽ ném trả Task kèm theo log lỗi chi tiết. "
+            "QUY TẮc BẮt BUỘC: "
+            "(1) luôn dùng tool 'Run Checks' trước khi kết luận PASS/FAIL — không chấp nhận nhận xét bằng mắt thuần túy; "
+            "(2) dán output thực tế từ tool vào báo cáo; "
+            "(3) nếu cần tra cứu code, dùng 'Search Codebase' hoặc 'Read File' trước khi đưa ra nhận định."
         ),
-        llm=llm_factory.get_flash_model(),  # Flash thay Ollama
-        tools=[code_interpreter, safe_file_write, safe_file_read],
+        llm=llm_factory.get_flash_model(),
+        tools=[code_interpreter, safe_file_write, safe_file_read, execution_checker, codebase_search],
         verbose=True,
         allow_delegation=False,
         memory=False,
@@ -133,10 +140,11 @@ def create_agents():
         backstory=(
             "Một 'Clean Code Monk'. Không quan tâm code có chạy được không (đó là việc của QC). "
             "Chỉ quan tâm code có ĐẸP và DỄ BẢO TRÌ không. "
-            "Sẽ yêu cầu Coder sửa lại nếu đặt tên biến không rõ ràng hoặc hàm quá dài."
+            "Sẽ yêu cầu Coder sửa lại nếu đặt tên biến không rõ ràng hoặc hàm quá dài. "
+            "Khi cần tra cứu code, dùng 'Search Codebase' để tìm nhanh, sau đó Read File để đọc toàn bộ."
         ),
-        llm=llm_factory.get_flash_model(),  # Flash cho review task nhẹ
-        tools=[safe_file_read, safe_dir_read, safe_file_write],
+        llm=llm_factory.get_flash_model(),
+        tools=[safe_file_read, safe_dir_read, safe_file_write, codebase_search],
         verbose=True,
         allow_delegation=False,
         memory=False,

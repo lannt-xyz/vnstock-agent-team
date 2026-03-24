@@ -16,7 +16,7 @@ _PATH_NOTE = (
 
 
 # ── Dev Team Workflow ──────────────────────────────────────────────────────────
-def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, request, previous_result=None, is_frontend=False):
+def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, request, previous_result=None, is_frontend=False, rag_hint=""):
     """6-agent dev team pipeline:
       t1 PM            → phân tích yêu cầu, lên kế hoạch task
       t2 Plan Reviewer → review & phê duyệt kế hoạch của PM (pro model)
@@ -71,17 +71,26 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             "1. Tech stack TRỰC TIẾP từ yêu cầu — web app Google Sheets → HTML+JS+Google Sheets API.\n"
             "2. Danh sách TẤT CẢ file cần tạo với đường dẫn 'src/...' và mô tả nội dung.\n"
             "3. Design Pattern và lý do.\n"
-            "4. Data flow giữa các module."
+            "4. Data flow giữa các module.\n\n"
+            "SAU PHẦN MÔ TẢ KIẾN TRÚC, xuất danh sách file theo đúng format sau:\n"
+            "```json\n"
+            "[\n"
+            '  {"name": "src/config.js", "description": "Cấu hình API keys và constants"},\n'
+            '  {"name": "src/app.js",    "description": "Entry point, khởi tạo app"}\n'
+            "]\n"
+            "```\n"
+            "Không thêm text ngoài JSON block này."
         ),
         agent=architect,
         context=[t1, t2],
-        expected_output="Danh sách file cần tạo (src/...), design pattern, data flow.",
+        expected_output="Danh sách file src/..., design pattern, data flow, và JSON block chuẩn.",
         output_file=f"{_WS_REL}/reports/t3_architecture.md",
     )
 
     t4 = Task(
         description=(
             "Dùng Read File đọc 'reports/t3_architecture.md'.\n"
+            "{qc_feedback}"
             "Viết TOÀN BỘ source code cho mọi file trong danh sách kiến trúc.\n"
             "\n"
             "OUTPUT FORMAT — dùng chính xác cấu trúc này cho mỗi file:\n"
@@ -108,15 +117,20 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
 
     if is_frontend:
         t5_desc = (
-            "Kiểm tra chất lượng code frontend do Coder viết:\n"
-            "1. Dùng Read File đọc tất cả file trong 'src/'.\n"
-            "2. Kiểm tra HTML: thẻ đóng mở đúng, có DOCTYPE và charset.\n"
-            "3. Kiểm tra JS: không có syntax error rõ ràng, không có biến chưa khai báo.\n"
-            "4. Kiểm tra bảo mật: không hardcode API key, không XSS rõ ràng.\n"
-            "5. Kiểm tra responsive: có meta viewport, CSS media query.\n"
-            "Xuất báo cáo với kết luận PASS hoặc FAIL kèm chi tiết."
+            "Kiểm tra chất lượng code frontend do Coder viết.\n"
+            "TRÌNH TỰ BẮt BUỘC:\n"
+            "1. Dùng 'Run Checks' với lệnh: node --check src/js/*.js\n"
+            "   (bỏ qua nếu không có Node.js — ghi rõ trong báo cáo)\n"
+            "2. Dùng 'Run Checks' với lệnh: eslint src/js/ --format compact\n"
+            "   (bỏ qua nếu eslint chưa cài — ghi rõ trong báo cáo)\n"
+            "3. Dùng Read File đọc các file src/ và kiểm tra:\n"
+            "   - HTML: DOCTYPE, charset, thẻ đóng/mở đúng.\n"
+            "   - Bảo mật: không hardcode API key, không XSS rõ ràng.\n"
+            "   - Responsive: meta viewport, CSS media query.\n"
+            "4. Kết luận PASS chỉ khi bước 1+2 không có syntax error.\n"
+            "Xuất báo cáo: PASS hoặc FAIL kèm stdout thực tế từ tool."
         )
-        t5_expected = "Báo cáo QC kết quả kiểm tra HTML/JS/CSS: PASS hoặc FAIL kèm chi tiết."
+        t5_expected = "Báo cáo QC: PASS hoặc FAIL kèm output thực tế từ node/eslint."
     else:
         t5_desc = (
             "Kiểm thử toàn bộ code do Coder viết:\n"
@@ -137,6 +151,8 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
         output_file=f"{_WS_REL}/reports/t5_qc_report.md",
     )
 
+    _rag_line = f"\n[NGỦ CẢNH CODEBASE]: {rag_hint}" if rag_hint else ""
+
     t6 = Task(
         description=(
             "Dùng Read File đọc các file trong 'src/', xuất nhận xét:\n"
@@ -144,7 +160,7 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             "2. Clean Code: code thừa, hàm >30 dòng, logic lồng nhau quá sâu?\n"
             "3. Security: hardcode secret, injection rõ ràng?\n"
             "4. Liệt kê cụ thể: file, dòng, vấn đề, hướng sửa.\n"
-            "Kết luận: APPROVED hoặc REQUEST CHANGES."
+            f"Kết luận: APPROVED hoặc REQUEST CHANGES.{_rag_line}"
         ),
         agent=reviewer,
         context=[t4, t5],

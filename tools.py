@@ -11,8 +11,11 @@ Security rules (see _BLOCKED_PATTERNS):
     compiled Python, .git internals, venv, node_modules, IDE files.
 """
 
+import glob as _glob
 import os
 import re
+import shlex
+import subprocess
 from pathlib import Path
 from typing import Type
 
@@ -251,9 +254,141 @@ class FinalAnalysisTool(BaseTool):
         )
 
 
-# ── Shared tool instances (imported by agents.py) ────────────────────────────
+# ── RAG state (updated by main.py after _build_rag_index) ───────────────────────
+rag_collection = None  # set to chromadb Collection when RAG is enabled
+
+
+# ── Tool: Execution Checker ────────────────────────────────────────────────────
+_EXEC_WHITELIST: frozenset = frozenset({"eslint", "stylelint", "node", "pytest", "pylint"})
+_EXEC_FORBIDDEN: tuple = (";", "&&", "||", "`", "$(")
+
+
+class _ExecInput(BaseModel):
+    command: str = Field(
+        ...,
+        description=(
+            "Command to run. First token must be one of: "
+            "eslint, stylelint, node, pytest, pylint. "
+            "Shell operators (; && || | ` $() are forbidden)."
+        ),
+    )
+
+
+class ExecutionCheckerTool(BaseTool):
+    name: str = "Run Checks"
+    description: str = (
+        f"Run syntax/lint/test checks inside the workspace ({WORKSPACE_ROOT}). "
+        "Allowed commands: eslint, stylelint, node --check, pytest, pylint. "
+        "Wildcards (*.js) are auto-expanded. Shell operators are blocked for security."
+    )
+    args_schema: Type[BaseModel] = _ExecInput
+
+    def _run(self, command: str) -> str:  # noqa: C901
+        # 1. Block forbidden shell operators before any parsing
+        for op in _EXEC_FORBIDDEN:
+            if op in command:
+                return f"[BLOCKED] Command contains forbidden operator '{op}'."
+        # Single pipe (not ||) is also forbidden
+        if re.search(r'(?<!\|)\|(?!\|)', command):
+            return "[BLOCKED] Command contains forbidden operator '|'."
+
+        # 2. Parse with shlex (handles quoted args correctly)
+        try:
+            tokens = shlex.split(command)
+        except ValueError as exc:
+            return f"[ERROR] Cannot parse command: {exc}"
+        if not tokens:
+            return "[ERROR] Empty command."
+
+        # 3. Whitelist check on the base name of the first token
+        base_cmd = os.path.basename(tokens[0])
+        if base_cmd not in _EXEC_WHITELIST:
+            return (
+                f"[BLOCKED] '{base_cmd}' is not in the allowed list: "
+                f"{sorted(_EXEC_WHITELIST)}."
+            )
+
+        # 4. Expand wildcards (shlex does NOT expand *)
+        #    Always resolve relative paths against WORKSPACE_ROOT.
+        expanded: list[str] = []
+        for tok in tokens:
+            if "*" in tok or "?" in tok:
+                p = Path(tok)
+                pattern = str(WORKSPACE_ROOT / p) if not p.is_absolute() else tok
+                matches = sorted(_glob.glob(pattern))
+                expanded.extend(matches if matches else [tok])
+            else:
+                expanded.append(tok)
+
+        # 5. Execute — shell=False prevents any further injection
+        try:
+            proc = subprocess.run(
+                expanded,
+                cwd=str(WORKSPACE_ROOT),
+                capture_output=True,
+                timeout=30,
+            )
+            out = proc.stdout.decode("utf-8", errors="replace")
+            err = proc.stderr.decode("utf-8", errors="replace")
+            combined = (out + err).strip()
+            return combined or f"(exit code {proc.returncode}, no output)"
+        except subprocess.TimeoutExpired:
+            return "[ERROR] Command timed out after 30 seconds."
+        except FileNotFoundError:
+            return f"[ERROR] Command not found: '{expanded[0]}'. Is it installed?"
+        except Exception as exc:
+            return f"[ERROR] {exc}"
+
+
+# ── Tool: Codebase Search (RAG) ─────────────────────────────────────────────────
+
+class _SearchInput(BaseModel):
+    query: str = Field(
+        ...,
+        description=(
+            "Natural language query to semantically search the codebase. "
+            "E.g. 'Google Sheets authentication', 'quiz score calculation'."
+        ),
+    )
+
+
+class CodebaseSearchTool(BaseTool):
+    name: str = "Search Codebase"
+    description: str = (
+        "Semantically search src/ files using the RAG index. "
+        "Use when you need to find a specific function, variable, or understand "
+        "part of the codebase without reading every file. "
+        "Only available when the project has ≥20 source files."
+    )
+    args_schema: Type[BaseModel] = _SearchInput
+
+    def _run(self, query: str) -> str:
+        import tools as _self_mod  # access module-level rag_collection
+        if _self_mod.rag_collection is None:
+            return (
+                "[INFO] RAG index not available (project < 20 files or index not built). "
+                "Use 'Read File' to inspect src/ files directly."
+            )
+        try:
+            results = _self_mod.rag_collection.query(query_texts=[query], n_results=3)
+            docs = results.get("documents", [[]])[0]
+            metas = results.get("metadatas", [[]])[0]
+            if not docs:
+                return "(no results — try a different query)"
+            parts = []
+            for doc, meta in zip(docs, metas):
+                path = meta.get("path", "unknown")
+                parts.append(f"=== {path} ===\n{doc[:800]}")
+            return "\n\n".join(parts)
+        except Exception as exc:
+            return f"[ERROR] Search failed: {exc}"
+
+
+# ── Shared tool instances (imported by agents.py) ────────────────────────────────────────
 safe_file_read   = SafeFileReadTool()
 safe_dir_read    = SafeDirectoryReadTool()
 safe_file_write  = SafeFileWriterTool()
 code_interpreter = CodeInterpreterTool()
 final_analysis   = FinalAnalysisTool()
+execution_checker = ExecutionCheckerTool()
+codebase_search   = CodebaseSearchTool()
