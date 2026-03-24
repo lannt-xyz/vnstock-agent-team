@@ -49,24 +49,24 @@ Sau:   t1(PM) → t2(Review) → tI(Investigation) → t3(Architect delta) → t
 - Callback từ thread → asyncio: dùng `asyncio.run_coroutine_threadsafe(coro, main_loop)`
 - Rate limit edit: Telegram 429 nếu edit quá nhanh — **chỉ edit khi chuyển Task hoặc sau mỗi 5 file**
 
-| # | ~Thời gian | Việc cần làm | File |
-|---|-----------|-------------|------|
-| S7-1 | 20p | **Bot setup + security**: `ALLOWED_USER_IDS = set(getenv("TG_USER_IDS","").split(","))`. dev handler: validate user, check `_pipeline_running` flag, reject nếu busy. | `bot.py` |
-| S7-2 | 25p | **Thread bridge**: `pipeline_thread = threading.Thread(target=..., daemon=True)`. Store `main_loop` trước `app.run_polling()`. Callback dùng `asyncio.run_coroutine_threadsafe(bot.edit_message_text(...), main_loop)`. | `bot.py`, main.py |
-| S7-3 | 25p | **Status formatter + rate-limit**: Emoji `⏳/✅/❌` cho từng task. Hiện `(N/M)` file và QC attempt. `_throttled_edit()`: **chỉ trigger khi chuyển Task hoặc sau mỗi 5 file** — tránh 429. Khi nhận 429: backoff 5s + retry 1 lần, nếu vẫn fail → skip (không crash pipeline). | `bot.py` |
-| S7-4 | 20p | **Callback injection**: Thêm `progress_callback: Callable[[str, str], None] \| None = None` vào `_run_dev_pipeline`. Gọi tại: chuyển task, mỗi 5 file trong per-file loop, QC FAIL. | main.py |
-| S7-5 | 20p | **QC report summary**: Sau t5, extract verdict + 500 ký tự đầu → `bot.send_message()` (tin riêng, không edit — làm mốc lưu vết). Final: `"✅ Xong! {N} file. /push để commit GitHub."` | `bot.py`, main.py |
-| S7-6 | 20p | **/status**: Đọc `state.json` → format trạng thái. **/cancel**: `cancel_event` (threading.Event) + cleanup container. **/push**: Pre-check `git config user.name/email`; nếu chưa set → đọc từ env `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, inject qua `-c` flag; thiếu → báo lỗi thay vì treo. `shell=False`. Whitelist branch: chỉ `main`, `master`, `dev/*`. | `bot.py` |
+| # | Status | ~Thời gian | Việc cần làm | File |
+|---|--------|-----------|-------------|------|
+| S7-1 | ✅ DONE | 20p | **Bot setup + security**: `ALLOWED_USER_IDS` từ `TG_USER_IDS` env. `/dev` handler: validate user ID, check `_pipeline_running` flag, reject nếu busy. | `bot.py` |
+| S7-2 | ✅ DONE | 25p | **Thread bridge**: `threading.Thread(target=_run_pipeline, daemon=True)`. Store `_main_loop` trước `app.run_polling()`. Callback dùng `asyncio.run_coroutine_threadsafe(_do_edit(...), _main_loop)`. | `bot.py`, main.py |
+| S7-3 | ✅ DONE | 25p | **Status formatter + rate-limit**: Emoji `⏳/🔄/✅/❌`. Hiện `(N/M)` file và QC attempt. `_throttled_edit()`: chỉ trigger khi task transition hoặc `file_counter % 5 == 0`. 429: `RetryAfter` → sleep + retry 1x → skip. | `bot.py` |
+| S7-4 | ✅ DONE | 20p | **Callback injection**: `progress_callback: Callable[[str, str], None] \| None = None` vào `_run_dev_pipeline`. `_cb()` wrapper. Gọi tại: tI/t3/t4/t5/t6/t7 start+done, mỗi file trong per-file loop, QC FAIL. | main.py |
+| S7-5 | ✅ DONE | 20p | **QC report summary**: `qc_fail` event → `_send_message()` tin riêng với 500 ký tự đầu t5. `done` event → `"✅ Xong! N file. /push để commit GitHub."` | `bot.py` |
+| S7-6 | ✅ DONE | 20p | **/status**: Đọc `state.json`. **/cancel**: `cancel_event.set()` + cleanup container. **/push**: pre-check `git config` → env fallback `GIT_AUTHOR_NAME/EMAIL` → inject `-c` flag → fail-fast thay vì treo. `shell=False`. Whitelist: `main`, `master`, `dev/*`. | `bot.py` |
 
 **Done khi:**
-- `/dev <yêu cầu>` → 1 tin nhắn, tự update khi chuyển task
-- QC FAIL → báo attempt
-- `/push` không treo dù chưa set git config
+- ✅ `/dev <yêu cầu>` → 1 tin nhắn, tự update khi chuyển task, throttle 5 file/edit
+- ✅ QC FAIL → tin nhắn riêng báo attempt + snippet
+- ✅ `/push` không treo dù chưa set git config
 
 ---
 
 ## Thứ tự implement
 
-1. **S6-0** — fix path bug ngay (10 phút, deploy được ngay)
-2. **Sprint 6** đầy đủ — investigation pipeline
-3. **Sprint 7** — Telegram dashboard
+1. **S6-0** — fix path bug ngay ✅ DONE
+2. **Sprint 6** đầy đủ — investigation pipeline ✅ DONE
+3. **Sprint 7** — Telegram dashboard ✅ DONE
