@@ -33,7 +33,7 @@ Yêu cầu về kết quả:
 - Có tài liệu hướng dẫn sử dụng và triển khai.
 """
 
-MAX_CYCLES = 3
+MAX_CYCLES = 1  # 3 → 1: 1 cycle là đủ cho lần chạy đầu, tránh lặp vô ích
 
 IS_FRONTEND = bool(re.search(
     r'html|css|javascript|\bjs\b|frontend|google sheets? api|trang web|website|web app',
@@ -293,9 +293,9 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
     t7 = _run_single_task(
         pm,
         f"Tóm tắt:\n- File tạo: {src_files}\n- QC: {t5[:400]}\n- Review: {t6[:400]}\n\n"
-        "Báo cáo cuối:\n1. Tóm tắt đã làm\n2. Danh sách file\n"
-        "3. Kết quả QC\n4. Nhận xét chất lượng\n5. Bước tiếp theo\n"
-        "Câu cuối: '✅ Xong! Đã tạo {len(src_files)} file. Ông check nhé!'",
+        f"Báo cáo cuối:\n1. Tóm tắt đã làm\n2. Danh sách file\n"
+        f"3. Kết quả QC\n4. Nhận xét chất lượng\n5. Bước tiếp theo\n"
+        f"Câu cuối: '✅ Xong! Đã tạo {len(src_files)} file. Ông check nhé!'",
         "Báo cáo ngắn gọn rõ ràng.",
         "reports/t7_final_report.md",
     )
@@ -400,14 +400,17 @@ if __name__ == "__main__":
                 "Dựa trên kết quả trên, hãy xác định nguyên nhân và tập trung vào điểm chưa giải quyết.\n"
             )
 
-        # Phase 4: t2 guard — chạy t1+t2 riêng với inner retry trước khi chạy toàn bộ
-        _run_t1_t2_with_guard(
-            pm, plan_reviewer,
-            crew_agents=[pm, plan_reviewer, architect, coder, qc, reviewer],
-            request=USER_REQUEST,
-            retry_context=retry_context,
-            is_frontend=IS_FRONTEND,
-        )
+        # Guard t1+t2 chỉ chạy ở cycle đầu tiên — cycle sau plan đã approved, không cần lặp lại
+        if cycle == 1:
+            _run_t1_t2_with_guard(
+                pm, plan_reviewer,
+                crew_agents=[pm, plan_reviewer, architect, coder, qc, reviewer],
+                request=USER_REQUEST,
+                retry_context=retry_context,
+                is_frontend=IS_FRONTEND,
+            )
+        else:
+            _log(f"[cycle {cycle}] Bỏ qua guard t1+t2 — dùng lại plan đã approved")
 
         # Step-by-step pipeline: inject file content, never ask model to read files
         try:

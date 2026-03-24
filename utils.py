@@ -36,18 +36,22 @@ class RobustGeminiLLM(LLM):
             try:
                 # Ép dùng key hiện tại trong vòng xoay
                 self.api_key = self._current_key
-                return super().call(*args, **kwargs)
+                result = super().call(*args, **kwargs)
+                # Gemini đôi khi trả về None/empty — retry với key khác
+                if not result:
+                    raise Exception("NONE_OR_EMPTY_RESPONSE")
+                return result
             except Exception as e:
                 err_msg = str(e).upper()
-                # Bắt lỗi 429 hoặc Quota
-                if any(x in err_msg for x in ["429", "RESOURCE_EXHAUSTED", "QUOTA"]):
+                # Bắt lỗi 429, Quota, hoặc empty response
+                if any(x in err_msg for x in ["429", "RESOURCE_EXHAUSTED", "QUOTA", "NONE_OR_EMPTY"]):
                     self._current_key = next(self._key_cycle)
                     wait_time = (i + 1) * 3
-                    print(f"--- [Rate Limit] Đổi sang Key: ...{self._current_key[-4:]} | Thử lại sau {wait_time}s ---")
+                    print(f"--- [Retry {i+1}] Key: ...{self._current_key[-4:]} | Thử lại sau {wait_time}s ---")
                     time.sleep(wait_time)
                 else:
                     raise e
-        raise Exception("Đã dùng hết sạch các API Keys hiện có mà vẫn bị chặn!")
+        raise Exception("Đã retry hết lần mà vẫn không có response!")
 
 class LLMFactory:
     def __init__(self):
@@ -63,26 +67,29 @@ class LLMFactory:
 
     def get_local_model(self):
         return LLM(
-            model="ollama/deepseek-coder-v2:16b-lite-instruct-q4_K_M",
+            model="ollama/qwen3.5-32k:latest",
             base_url="http://localhost:11434",
             temperature=0.2,
-            timeout=900,
-            extra_body={
-                "num_ctx": 16000,
-                "num_gpu": 99,
-                "num_thread": 8
-            },
+            timeout=120,  # 900s → 120s: fail nhanh thay vì ngồi chờ 15 phút
+        )
+
+    def get_deepseek_model(self):
+        return LLM(
+            model="deepseek/gemini-2.0-flash:latest",
+            base_url="https://api.deepseek.com",
+            temperature=0.1,
+            timeout=120,
         )
 
     def get_flash_model(self, is_pro=False):
-        # Gemini 2.0 Flash thường mượt hơn trong giai đoạn này
-        model_name = "gemini/gemini-2.0-flash" if not is_pro else "gemini/gemini-2.5-pro"
+        model_name = "gemini/gemini-2.5-flash" if not is_pro else "gemini/gemini-2.5-pro"
 
         return RobustGeminiLLM(
             model=model_name,
             keys=self.keys,
             api_key=self.keys[0],  # cần cho LLM.__new__ chạy trước __init__
             temperature=0.1 if not is_pro else 0.2,
+            max_tokens=8192,  # tránh output bị cắt cụt giữa chừng
         )
 
     def get_pro_model(self):

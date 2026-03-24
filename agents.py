@@ -26,12 +26,12 @@ def create_agents():
             "QUY TẮc BẮt BUỘC: Luôn dùng tool Write File để lưu mọi file báo cáo. "
             "Tuyệt đối không nhả nội dung file vào chat."
         ),
-        llm=llm_factory.get_local_model(),
+        llm=llm_factory.get_flash_model(),  # Flash: nhanh hơn Ollama nhiều bậc
         tools=[safe_file_write, safe_file_read],
         verbose=True,
         allow_delegation=False,
         memory=False,
-        max_iter=10,
+        max_iter=6,
         max_rpm=8,
 
     )
@@ -48,12 +48,12 @@ def create_agents():
             "Không bao giờ để một kế hoạch mơ hồ lọt qua. Nếu plan thiếu sót, "
             "sẽ trả lại ngay với danh sách chỉnh sửa cụ thể trước khi cho phép team tiến tiếp."
         ),
-        llm=llm_factory.get_local_model(),
+        llm=llm_factory.get_flash_model(),  # Dùng Flash: task review không cần local model
         tools=[safe_file_read, safe_file_write],
         verbose=True,
         allow_delegation=False,
         memory=False,
-        max_iter=5,
+        max_iter=4,
         max_rpm=8,
     )
 
@@ -69,12 +69,12 @@ def create_agents():
             "Khi Coder muốn sửa 5 file, Architect phải là người duyệt xem việc sửa đó có gây lỗi "
             "chéo (side effects) hay không. Cực kỳ dị ứng với 'Spaghetti code'."
         ),
-        llm=llm_factory.get_local_model(),
+        llm=llm_factory.get_flash_model(),  # Flash đủ mạnh cho architecture design
         tools=[safe_dir_read, safe_file_read, safe_file_write],
         verbose=True,
         allow_delegation=False,
         memory=False,
-        max_iter=8,
+        max_iter=5,
         max_rpm=8,
     )
 
@@ -94,12 +94,12 @@ def create_agents():
             "Nếu thử sửa một lỗi quá 3 lần không thành công, hãy dừng lại và báo cáo vấn đề cụ thể "
             "thay vì tiếp tục thử lại vô ích."
         ),
-        llm=llm_factory.get_local_model(),
+        llm=llm_factory.get_pro_model(),  # Dùng Pro: code task thường phức tạp, cần model mạnh hơn
         tools=[safe_file_write, safe_file_read, code_interpreter],
         verbose=True,
         allow_delegation=False,
         memory=False,
-        max_iter=20,
+        max_iter=8,  # 20 → 8: tránh agent spin vô tận
         max_rpm=8,
     )
 
@@ -115,12 +115,12 @@ def create_agents():
             "Luôn tìm kiếm lỗi bảo mật, lỗi logic và hiệu năng. "
             "Nếu thấy lỗi, sẽ ném trả Task kèm theo log lỗi chi tiết."
         ),
-        llm=llm_factory.get_local_model(),
+        llm=llm_factory.get_flash_model(),  # Flash thay Ollama
         tools=[code_interpreter, safe_file_write, safe_file_read],
         verbose=True,
         allow_delegation=False,
         memory=False,
-        max_iter=8,
+        max_iter=6,
         max_rpm=8,
     )
 
@@ -135,12 +135,12 @@ def create_agents():
             "Chỉ quan tâm code có ĐẸP và DỄ BẢO TRÌ không. "
             "Sẽ yêu cầu Coder sửa lại nếu đặt tên biến không rõ ràng hoặc hàm quá dài."
         ),
-        llm=llm_factory.get_local_model(),
+        llm=llm_factory.get_flash_model(),  # Flash cho review task nhẹ
         tools=[safe_file_read, safe_dir_read, safe_file_write],
         verbose=True,
         allow_delegation=False,
         memory=False,
-        max_iter=5,
+        max_iter=4,
         max_rpm=8,
     )
 
