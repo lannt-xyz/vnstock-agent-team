@@ -201,15 +201,196 @@ t4_raw = "\n\n".join(t4_outputs)
 
 ---
 
+## Bugs Discovered (Post Run #1)
+
+| # | Triệu chứng | Root Cause | Fix | Sprint |
+|---|-------------|-----------|-----|--------|
+| B1 | QC FAIL 3/3 lần dù `node --check` PASS | `eslint` chưa cài → `ExecutionCheckerTool` trả `[ERROR] Command not found` → QC agent đọc → đánh FAIL Coder oan | Thêm token `[TOOL_NOT_INSTALLED]` cho loại lỗi này; QC task rule: skip ≠ FAIL | Sprint 4 B1 |
+| B2 | Comment bị cắt cụt (`đã đượ`); global variable | Architect không output JSON block → `_parse_file_inventory` trả `[]` → fallback single-shot 18 file → vượt token limit → LLM truncate | Mạnh hơn t3 prompt + debug log xác nhận inventory; ES6 constraint cho Coder | Sprint 4 B2+B3 |
+| B3 | Global var `gapi`, `API_KEY` trên `window` | Không có ES6 constraint trong per-file Coder prompt; LLM dùng pattern cũ | Thêm `"ES6 Modules, no global var"` vào Coder prompt | Sprint 4 B3 |
+
+---
+
+## Phase 3 — Docker Execution Environment
+
+**Mục tiêu:** Chuyển toàn bộ execution (lint, syntax check, test) sang Docker container — đảm bảo tính nhất quán 100%, không phụ thuộc môi trường host. Chính Agent (Architect + Coder) tự tạo `Dockerfile.checker` phù hợp với tech stack của từng project.
+
+---
+
+### Step 3A · Dockerfile.checker — Infrastructure as Code by Agent
+
+**Ý tưởng cốt lõi:** Architect biết tech stack → biết cần tool gì → tự đưa `Dockerfile.checker` vào JSON file inventory. Coder viết nội dung. Pipeline tự build image và quản lý container.
+
+`tasks.py` — t3 Architect description (bổ sung):
+```
+Dựa trên tech stack đã thiết kế, thêm MỘT ENTRY vào JSON inventory cho file "Dockerfile.checker":
+{"name": "Dockerfile.checker", "description": "Docker QC environment — cài đủ runtime và linter phù hợp tech stack"}
+```
+
+`tasks.py` — t4 Coder per-file: treat `Dockerfile.checker` như bất kỳ file nào — Coder viết nội dung Dockerfile đầy đủ phù hợp tech stack đã thiết kế.
+
+**Fallback `_FALLBACK_DOCKERFILE`** (hardcoded trong `main.py`, dùng khi Architect không include hoặc `docker build` thất bại):
+```dockerfile
+FROM python:3.11-slim
+
+# Node.js 20
+RUN apt-get update && apt-get install -y curl && \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && apt-get clean
+
+# JS tools
+RUN npm install -g eslint stylelint prettier
+
+# Python tools
+RUN pip install --no-cache-dir pytest pylint
+
+# Non-root user
+RUN useradd -m checker
+USER checker
+WORKDIR /workspace
+```
+
+---
+
+### Step 3B · DockerCheckerManager trong `main.py`
+
+**Module-level state** (trong `tools.py` để `ExecutionCheckerTool` truy cập):
+```python
+checker_container: str | None = None  # set bởi _run_dev_pipeline sau docker run
+```
+
+**3 hàm mới trong `main.py`:**
+```python
+_FALLBACK_DOCKERFILE = "..."  # string constant ở đầu file
+
+def _ensure_checker_image(cycle: int) -> str:
+    """Build Docker image. Tự write fallback Dockerfile nếu Architect không tạo."""
+    tag = f"project-checker:{cycle}"
+    dockerfile = WORKSPACE_ROOT / "Dockerfile.checker"
+    if not dockerfile.exists():
+        dockerfile.write_text(_FALLBACK_DOCKERFILE)
+        _log("[docker] Dockerfile.checker missing — wrote hardcoded fallback")
+    result = subprocess.run(
+        ["docker", "build", "-t", tag, "-f", str(dockerfile), str(WORKSPACE_ROOT)],
+        capture_output=True, timeout=180
+    )
+    if result.returncode != 0:
+        _log(f"[docker] Build failed: {result.stderr.decode()[:500]}")
+        return ""  # caller sẽ skip Docker, fallback về local exec
+    _log(f"[docker] Image built: {tag}")
+    return tag
+
+def _start_checker_container(image_tag: str, cycle: int) -> str:
+    """docker run -d với volume mount. Returns container name hoặc '' nếu lỗi."""
+    name = f"dev-checker-{cycle}"
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True)  # xóa stale
+    result = subprocess.run([
+        "docker", "run", "-d", "--name", name,
+        "-v", f"{WORKSPACE_ROOT}:/workspace",
+        "-w", "/workspace",
+        image_tag, "tail", "-f", "/dev/null"
+    ], capture_output=True, timeout=30)
+    if result.returncode != 0:
+        _log(f"[docker] Container start failed: {result.stderr.decode()[:200]}")
+        return ""
+    _log(f"[docker] Container started: {name}")
+    return name
+
+def _stop_checker_container(name: str) -> None:
+    subprocess.run(["docker", "stop", name], capture_output=True, timeout=15)
+    subprocess.run(["docker", "rm", name], capture_output=True, timeout=10)
+    _log(f"[docker] Container stopped and removed: {name}")
+```
+
+**Tích hợp vào `_run_dev_pipeline`** — bọc toàn bộ trong `try/finally`:
+```python
+container_name = ""
+try:
+    ...  # t3, t4 ghi file như bình thường
+    # Ngay sau t4 ghi file xong, trước vòng QC:
+    image_tag = _ensure_checker_image(cycle)
+    if image_tag:
+        container_name = _start_checker_container(image_tag, cycle)
+        _tools_mod.checker_container = container_name
+    # t5, t6, t7 tiếp tục — ExecutionCheckerTool tự detect container
+    ...
+finally:
+    if container_name:
+        _stop_checker_container(container_name)
+    _tools_mod.checker_container = None  # reset state cho cycle tiếp theo
+```
+
+---
+
+### Step 3C · Update `ExecutionCheckerTool` — docker exec mode
+
+```python
+# tools.py — module-level
+checker_container: str | None = None  # set bởi _run_dev_pipeline
+
+class ExecutionCheckerTool(BaseTool):
+    def _run(self, command: str) -> str:
+        # ... existing whitelist + injection checks ...
+        # ... existing glob expansion → expanded list ...
+
+        # Chọn executor: docker exec ưu tiên, local làm fallback
+        if checker_container:
+            cmd = ["docker", "exec", checker_container] + expanded
+        else:
+            cmd = expanded  # local execution
+
+        try:
+            proc = subprocess.run(cmd, cwd=str(WORKSPACE_ROOT), capture_output=True, timeout=30)
+            out = proc.stdout.decode("utf-8", errors="replace")
+            err = proc.stderr.decode("utf-8", errors="replace")
+            if proc.returncode == 127:  # shell "command not found" exit code
+                return f"[TOOL_NOT_INSTALLED] '{expanded[0]}' not found in container."
+            return (out + err).strip() or f"(exit code {proc.returncode}, no output)"
+        except FileNotFoundError:
+            return f"[TOOL_NOT_INSTALLED] '{expanded[0]}' not installed on host."
+        except subprocess.TimeoutExpired:
+            return "[ERROR] Command timed out after 30 seconds."
+```
+
+**QC task t5 — rule bổ sung:**
+```
+QUAN TRỌNG — Nếu output của tool bắt đầu bằng [TOOL_NOT_INSTALLED]:
+→ Ghi chú vào báo cáo: "<tool>: not installed"
+→ BỎ QUA check đó
+→ KHÔNG tính là FAIL
+Chỉ tính FAIL khi tool chạy ĐƯỢC và output thực sự chứa lỗi.
+```
+
+---
+
+### Step 3D · Startup & Cleanup Strategy
+
+| Scenario | Hành vi |
+|----------|---------|
+| Docker không cài trên host | `FileNotFoundError` khi gọi `docker build` → log warning → local exec fallback |
+| `docker build` thất bại | Log stderr, `_ensure_checker_image` trả `""` → container không start → local exec |
+| Container crash giữa chừng | `docker exec` fail → `ExecutionCheckerTool` catch → local exec + log warning |
+| Pipeline crash (Python exception) | `try/finally` trong `_run_dev_pipeline` đảm bảo `_stop_checker_container` luôn được gọi |
+| Stale container từ run trước | `docker rm -f {name}` trước `docker run` — tự dọn dẹp không cần thủ công |
+
+**Security notes:**
+- Mọi lệnh vào container vẫn qua whitelist + injection check trước khi `docker exec`
+- Volume mount `WORKSPACE_ROOT:/workspace` — container không thể access filesystem ngoài workspace
+- Dockerfile fallback dùng non-root user (`USER checker`) — container không chạy với root
+- `cycle` dùng làm image tag → image cũ vẫn còn (không tự xóa) — cần `docker image prune` thủ công nếu disk tight
+
+---
+
 ## Relevant files (chỉ dev team scope)
 
 | File | Hàm/Section bị thay đổi |
 |------|--------------------------|
-| `tasks.py` | `create_dev_team_tasks` — description t4, t5, t6 |
-| `main.py` | `_run_dev_pipeline`, `_run_single_task`, `_extract_and_write_src`, `_run_t1_t2_with_guard`, thêm `_build_rag_index`, `_parse_file_inventory` |
+| `tasks.py` | `create_dev_team_tasks` — description t3, t4, t5, t6 |
+| `main.py` | `_run_dev_pipeline` (try/finally + Docker), `_run_single_task`, `_extract_and_write_src`, `_build_rag_index`, `_parse_file_inventory`, thêm `_ensure_checker_image`, `_start_checker_container`, `_stop_checker_container`, `_FALLBACK_DOCKERFILE` |
 | `agents.py` | Dev team agents: QC, Reviewer, Architect — thêm tools |
-| `tools.py` | Thêm `ExecutionCheckerTool`, `CodebaseSearchTool` |
+| `tools.py` | `ExecutionCheckerTool` (docker exec mode + `[TOOL_NOT_INSTALLED]`), `CodebaseSearchTool`, thêm `checker_container` module var |
 | `workspace/state.json` | Mở rộng schema thêm `qc_history` |
+| `Dockerfile.checker` | File mới — Coder agent viết; fallback hardcoded trong `main.py` |
 
 **Không thay đổi:** `create_quant_tasks`, `create_cafef_news_tasks`, quant agents, cafef agents.
 
@@ -262,11 +443,38 @@ t4_raw = "\n\n".join(t4_outputs)
 
 ---
 
+### Sprint 4 — Docker Environment + Bug Fixes · ~90 phút 🔄 TODO
+**Mục tiêu:** Triệt tiêu FAIL oan do thiếu tool; chạy mọi check trong Docker container nhất quán; Architect tự thiết kế Dockerfile theo tech stack; fix các bug phát hiện từ Run #1.
+
+> **Phụ thuộc:** Sprint 1 + 2 + 3 phải hoàn thành và ổn định.
+
+| # | Thời gian | Việc cần làm | File | Status |
+|---|-----------|--------------|------|--------|
+| B1 | 10p | Fix `[TOOL_NOT_INSTALLED]`: sửa `ExecutionCheckerTool._run()` — `FileNotFoundError` (local) → trả `[TOOL_NOT_INSTALLED] '<cmd>'...`; exit code 127 (docker exec) → idem. Cập nhật t5 QC task: thêm rule "output `[TOOL_NOT_INSTALLED]` = bỏ qua, **không tính FAIL**." | `tools.py`, `tasks.py` | 🔄 |
+| B2 | 15p | Fix per-file trigger: thêm `_log(f"[inventory] raw block: {raw[:200]}")` trước `json.loads` trong `_parse_file_inventory`. Mạnh hơn t3 JSON instruction: thêm dòng `"⚠️ BẮT BUỘC: Kết thúc response bằng JSON block. Không thêm text nào sau JSON."` | `main.py`, `tasks.py` | 🔄 |
+| B3 | 15p | Fix ES6 — **2 điểm**: ① Sửa t3 Architect description: thêm `"Thiết kế kiến trúc theo chuẩn ES Modules hiện đại — mỗi file là một module độc lập với export/import rõ ràng."` (nếu Architect thiết kế đúng, Coder sẽ ít tự ý dùng `window.xxx`). ② Bổ sung vào per-file Coder prompt: `"Dùng ES6 Modules (export/import). Tuyệt đối KHÔNG khai báo biến global (window/global/var ở module scope). Mọi dependency dùng import."` | `tasks.py`, `main.py` | 🔄 |
+| 4 | 20p | Dockerfile IaC: sửa t3 prompt — yêu cầu Architect thêm `"Dockerfile.checker"` vào JSON inventory với description phù hợp tech stack. Viết `_FALLBACK_DOCKERFILE` constant trong `main.py`. | `tasks.py`, `main.py` | 🔄 |
+| 5 | 35p | DockerCheckerManager: thêm 3 hàm vào `main.py` — `_ensure_checker_image(cycle)`, `_start_checker_container(image_tag, cycle)`, `_stop_checker_container(name)`. Thêm `checker_container: str | None = None` vào `tools.py`. Bọc `_run_dev_pipeline` trong `try/finally`. Gọi build+run sau khi t4 ghi file xong, trước vòng QC. | `main.py`, `tools.py` | 🔄 |
+| 6 | 20p | Update `ExecutionCheckerTool`: nếu `checker_container` không rỗng → thay `cmd = expanded` bằng `cmd = ["docker", "exec", checker_container] + expanded`. Giữ local exec làm fallback. Exit code 127 → `[TOOL_NOT_INSTALLED]`. | `tools.py` | 🔄 |
+
+**Done khi:** Log hiện `[docker] Container started: dev-checker-N`; t5 chạy `eslint` trong container không còn `TOOL_NOT_INSTALLED`; log hiện `[inventory] file_inventory: N file(s) (per-file mode)` với N > 0.
+
+---
+
 ## Verification
 
+**Phase 1–2 (đã done):**
 1. Chạy 1 cycle với project cố tình có lỗi JS syntax → xác nhận t5 báo FAIL, t4 retry, `qc_history` trong `state.json` ghi đúng attempt + reason.
 2. Lần retry t4 phải có phần `[QC FEEDBACK]` trong description → xác nhận bằng log `_run_single_task`.
 3. Output t5 phải chứa stdout thực tế từ `node --check` hoặc `eslint`, không chỉ nhận định văn xuôi.
 4. Gọi `Search Codebase` từ QC agent phải trả về đoạn code liên quan (không phải toàn bộ file).
 5. Khi chromadb lỗi: pipeline không crash, log warning, t5/t6 fallback về Read File thông thường.
-6. Sau Phase 2: số file ghi vào `src/` phải khớp với số file trong `_parse_file_inventory`, không thiếu, không cắt cụt.
+6. Log hiện `[inventory] file_inventory: N file(s) (per-file mode)` với N > 0; số file `src/` khớp với N.
+
+**Phase 3 — Docker (cần verify sau Sprint 4):**
+7. Sau khi `_run_dev_pipeline` build xong t4: `docker ps` hiện container `dev-checker-{cycle}` đang chạy.
+8. Sau khi pipeline kết thúc (dù PASS, FAIL, hay exception): `docker ps` không còn container đó.
+9. t5 output chứa stdout `eslint` thực tế từ container — không còn `[TOOL_NOT_INSTALLED]`.
+10. Tắt Docker trên host: pipeline vẫn chạy (log `[docker] Build failed` hoặc `FileNotFoundError`), local exec fallback, không crash.
+11. Stale container từ run trước: `_start_checker_container` tự `docker rm -f` không cần thủ công.
+12. Coder không dùng global variable: mọi JS file dùng `export`/`import`, không có `window.xxx = ...`.
