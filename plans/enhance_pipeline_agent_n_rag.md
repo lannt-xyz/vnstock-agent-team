@@ -443,19 +443,19 @@ Chỉ tính FAIL khi tool chạy ĐƯỢC và output thực sự chứa lỗi.
 
 ---
 
-### Sprint 4 — Docker Environment + Bug Fixes · ~90 phút 🔄 TODO
+### Sprint 4 — Docker Environment + Bug Fixes · ~90 phút ✅ DONE
 **Mục tiêu:** Triệt tiêu FAIL oan do thiếu tool; chạy mọi check trong Docker container nhất quán; Architect tự thiết kế Dockerfile theo tech stack; fix các bug phát hiện từ Run #1.
 
 > **Phụ thuộc:** Sprint 1 + 2 + 3 phải hoàn thành và ổn định.
 
 | # | Thời gian | Việc cần làm | File | Status |
 |---|-----------|--------------|------|--------|
-| B1 | 10p | Fix `[TOOL_NOT_INSTALLED]`: sửa `ExecutionCheckerTool._run()` — `FileNotFoundError` (local) → trả `[TOOL_NOT_INSTALLED] '<cmd>'...`; exit code 127 (docker exec) → idem. Cập nhật t5 QC task: thêm rule "output `[TOOL_NOT_INSTALLED]` = bỏ qua, **không tính FAIL**." | `tools.py`, `tasks.py` | 🔄 |
-| B2 | 15p | Fix per-file trigger: thêm `_log(f"[inventory] raw block: {raw[:200]}")` trước `json.loads` trong `_parse_file_inventory`. Mạnh hơn t3 JSON instruction: thêm dòng `"⚠️ BẮT BUỘC: Kết thúc response bằng JSON block. Không thêm text nào sau JSON."` | `main.py`, `tasks.py` | 🔄 |
-| B3 | 15p | Fix ES6 — **2 điểm**: ① Sửa t3 Architect description: thêm `"Thiết kế kiến trúc theo chuẩn ES Modules hiện đại — mỗi file là một module độc lập với export/import rõ ràng."` (nếu Architect thiết kế đúng, Coder sẽ ít tự ý dùng `window.xxx`). ② Bổ sung vào per-file Coder prompt: `"Dùng ES6 Modules (export/import). Tuyệt đối KHÔNG khai báo biến global (window/global/var ở module scope). Mọi dependency dùng import."` | `tasks.py`, `main.py` | 🔄 |
-| 4 | 20p | Dockerfile IaC: sửa t3 prompt — yêu cầu Architect thêm `"Dockerfile.checker"` vào JSON inventory với description phù hợp tech stack. Viết `_FALLBACK_DOCKERFILE` constant trong `main.py`. | `tasks.py`, `main.py` | 🔄 |
-| 5 | 35p | DockerCheckerManager: thêm 3 hàm vào `main.py` — `_ensure_checker_image(cycle)`, `_start_checker_container(image_tag, cycle)`, `_stop_checker_container(name)`. Thêm `checker_container: str | None = None` vào `tools.py`. Bọc `_run_dev_pipeline` trong `try/finally`. Gọi build+run sau khi t4 ghi file xong, trước vòng QC. | `main.py`, `tools.py` | 🔄 |
-| 6 | 20p | Update `ExecutionCheckerTool`: nếu `checker_container` không rỗng → thay `cmd = expanded` bằng `cmd = ["docker", "exec", checker_container] + expanded`. Giữ local exec làm fallback. Exit code 127 → `[TOOL_NOT_INSTALLED]`. | `tools.py` | 🔄 |
+| B1 | 10p | Fix `[TOOL_NOT_INSTALLED]`: sửa `ExecutionCheckerTool._run()` — `FileNotFoundError` (local) → trả `[TOOL_NOT_INSTALLED] '<cmd>'...`; exit code 127 (docker exec) → idem. Cập nhật t5 QC task: thêm rule "output `[TOOL_NOT_INSTALLED]` = bỏ qua, **không tính FAIL**." | `tools.py`, `tasks.py` | ✅ |
+| B2 | 15p | Fix per-file trigger: thêm `_log(f"[inventory] raw block: {raw[:200]}")` trước `json.loads` trong `_parse_file_inventory`. Mạnh hơn t3 JSON instruction: thêm dòng `"⚠️ BẮT BUỘC: Kết thúc response bằng JSON block. Không thêm text nào sau JSON."` | `main.py`, `tasks.py` | ✅ |
+| B3 | 15p | Fix ES6 — **2 điểm**: ① Sửa t3 Architect description: thêm `"Thiết kế kiến trúc theo chuẩn ES Modules hiện đại — mỗi file là một module độc lập với export/import rõ ràng."` (nếu Architect thiết kế đúng, Coder sẽ ít tự ý dùng `window.xxx`). ② Bổ sung vào per-file Coder prompt: `"Dùng ES6 Modules (export/import). Tuyệt đối KHÔNG khai báo biến global (window/global/var ở module scope). Mọi dependency dùng import."` | `tasks.py`, `main.py` | ✅ |
+| 4 | 20p | Dockerfile IaC: sửa t3 prompt — yêu cầu Architect thêm `"Dockerfile.checker"` vào JSON inventory với description phù hợp tech stack. Viết `_FALLBACK_DOCKERFILE` constant trong `main.py`. | `tasks.py`, `main.py` | ✅ |
+| 5 | 35p | DockerCheckerManager: thêm 3 hàm vào `main.py` — `_ensure_checker_image(cycle)`, `_start_checker_container(image_tag, cycle)`, `_stop_checker_container(name)`. Thêm `checker_container: str | None = None` vào `tools.py`. Bọc `_run_dev_pipeline` trong `try/finally`. Gọi build+run sau khi t4 ghi file xong, trước vòng QC. | `main.py`, `tools.py` | ✅ |
+| 6 | 20p | Update `ExecutionCheckerTool`: nếu `checker_container` không rỗng → thay `cmd = expanded` bằng `cmd = ["docker", "exec", checker_container] + expanded`. Giữ local exec làm fallback. Exit code 127 → `[TOOL_NOT_INSTALLED]`. | `tools.py` | ✅ |
 
 **Done khi:** Log hiện `[docker] Container started: dev-checker-N`; t5 chạy `eslint` trong container không còn `TOOL_NOT_INSTALLED`; log hiện `[inventory] file_inventory: N file(s) (per-file mode)` với N > 0.
 
