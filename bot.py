@@ -210,6 +210,19 @@ def make_progress_callback() -> Callable[[str, str], None]:
             _throttled_edit("task")
             _send_message(f"✅ Xong! {detail} file. /push để commit GitHub.")
 
+        elif event == "pipeline_fail":
+            # QC failed all retries — mark t5 red, don't pretend success
+            _task_status["t5"] = "fail"
+            for k in _task_status:
+                if _task_status[k] == "running":
+                    _task_status[k] = "pass"
+            _throttled_edit("task")
+            _send_message(
+                f"❌ Pipeline FAIL! QC không pass sau {_qc_total} lần thử.\n"
+                f"{detail} file đã tạo nhưng có lỗi syntax/lint.\n"
+                "Xem /status và reports/t5_qc_report.md để debug."
+            )
+
     return _cb
 
 

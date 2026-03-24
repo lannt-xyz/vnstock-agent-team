@@ -345,7 +345,20 @@ class ExecutionCheckerTool(BaseTool):
         # 5. Choose executor: docker exec (preferred) or local
         import tools as _self_mod
         if _self_mod.checker_container:
-            cmd = ["docker", "exec", _self_mod.checker_container] + expanded
+            # Remap absolute host paths → /workspace/ container paths
+            # (wildcard expansion above produces host-absolute paths; container mounts at /workspace)
+            remapped: list[str] = []
+            for tok in expanded:
+                p = Path(tok)
+                if p.is_absolute():
+                    try:
+                        rel = p.relative_to(WORKSPACE_ROOT)
+                        remapped.append("/workspace/" + rel.as_posix())
+                    except ValueError:
+                        remapped.append(tok)
+                else:
+                    remapped.append(tok)
+            cmd = ["docker", "exec", "-w", "/workspace", _self_mod.checker_container] + remapped
         else:
             cmd = expanded
 

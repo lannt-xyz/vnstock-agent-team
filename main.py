@@ -233,8 +233,8 @@ RUN apt-get update && apt-get install -y curl && \\
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \\
     apt-get install -y nodejs && apt-get clean
 
-# JS tools
-RUN npm install -g eslint stylelint prettier
+# JS tools (globals + @eslint/js required by ESLint 10 flat config)
+RUN npm install -g eslint stylelint prettier globals @eslint/js
 
 # Python tools
 RUN pip install --no-cache-dir pytest pylint
@@ -839,7 +839,13 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
     )
     _log("[pipeline] t7 done")
     _cb("task_done", "t7")
-    _cb("done", str(len(src_files)))
+
+    # Final outcome: report FAIL if QC never passed
+    final_verdict = qc_history[-1]["verdict"] if qc_history else "FAIL"
+    if final_verdict == "PASS":
+        _cb("done", str(len(src_files)))
+    else:
+        _cb("pipeline_fail", str(len(src_files)))
 
     # Stop Docker checker container (cleanup after QC loop is done)
     if container_name:
