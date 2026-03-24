@@ -10,9 +10,9 @@
 
 ---
 
-## Phase 1 — Nền + Kiểm chứng thật
+## Phase 1 — Nền + Kiểm chứng thật ✅ DONE
 
-### Step 1A · QC Feedback Loop (retry t4→t5→t6)
+### Step 1A · QC Feedback Loop (retry t4→t5→t6) ✅ DONE
 
 **Mục tiêu:** Khi t5 QC báo FAIL, tự động feed lý do lỗi ngược lại t4 Coder và chạy lại, tối đa `MAX_QC_RETRIES` lần.
 
@@ -48,7 +48,7 @@
 
 ---
 
-### Step 1B · Real Execution Checks trong t5 QC
+### Step 1B · Real Execution Checks trong t5 QC ✅ DONE
 
 **Mục tiêu:** t5 QC không chỉ nhận xét bằng prompt mà phải thực thi kiểm tra thật và trả bằng chứng cụ thể.
 
@@ -91,7 +91,7 @@ Nhánh `is_frontend=False` (pytest backend): giữ nguyên logic hiện tại, c
 
 ---
 
-### Step 1C · RAG — Codebase Search Tool
+### Step 1C · RAG — Codebase Search Tool ✅ DONE
 
 **Mục tiêu:** Thay `src_preview` cắt cứng bằng semantic search, agent tự gọi khi cần ngữ cảnh về codebase.
 
@@ -129,9 +129,9 @@ class CodebaseSearchTool(BaseTool):
 
 ---
 
-## Phase 2 — Per-File Code Generation
+## Phase 2 — Per-File Code Generation ✅ DONE
 
-### Step 2A · Parse file inventory từ t3 và generate theo từng file
+### Step 2A · Parse file inventory từ t3 và generate theo từng file ✅ DONE
 
 **Mục tiêu:** Thay vì t4 viết toàn bộ codebase trong 1 lần gọi (dễ bị cắt output), tách thành N lần gọi, mỗi lần 1 file theo danh sách kiến trúc.
 
@@ -185,7 +185,7 @@ t4_raw = "\n\n".join(t4_outputs)
 
 ---
 
-### Step 2B · Dependency ordering và report tổng hợp
+### Step 2B · Dependency ordering và report tổng hợp ✅ DONE
 
 **Mục tiêu:** Đảm bảo file config/utils được generate trước file phụ thuộc vào chúng, và báo cáo phản ánh đúng từng file.
 
@@ -219,44 +219,44 @@ t4_raw = "\n\n".join(t4_outputs)
 
 > Thứ tự Sprint = thứ tự phụ thuộc kỹ thuật: Sprint 1 (execution checks + retry loop) phải xong trước Sprint 2 (RAG), Sprint 2 phải xong trước Sprint 3 (per-file generation).
 
-### Sprint 1 — Lắp "Mắt" và "Tay" · ~60 phút
+### Sprint 1 — Lắp "Mắt" và "Tay" · ~60 phút ✅ DONE
 **Mục tiêu:** Agent tự chạy kiểm tra thật và tự sửa khi thất bại.
 
-| # | Thời gian | Việc cần làm | File |
-|---|-----------|--------------|------|
-| 1 | 15p | Thêm `ExecutionCheckerTool` vào `tools.py`. Whitelist prefix: `node`, `eslint`, `stylelint`, `pytest`, `pylint`. Validate bằng `shlex.split()`, chặn `;`, `&&`, `\|`, `\|​\|`, `` ` ``, `$(`. Sau validate, dùng `glob.glob()` expand wildcard, gọi `subprocess.run(args, shell=False)`. | `tools.py` |
-| 2 | 15p | Sửa task t5 trong `create_dev_team_tasks` (nhánh `is_frontend=True`): thêm trình tự bắt buộc gọi `"Run Checks"` — `node --check`, `eslint` — trước khi kết luận PASS/FAIL. Thêm `ExecutionCheckerTool` vào `tools` của QC agent trong `agents.py`. | `tasks.py`, `agents.py` |
-| 3 | 30p | Trong `_run_dev_pipeline` (`main.py`): bọc cụm t4→t5→t6 trong `for qc_attempt in range(1, MAX_QC_RETRIES + 1)`. Nếu t5 chứa `"FAIL"`: trích lý do, nối vào description t4 lần sau. Lần retry cuối bật **Simple Mode** cho t4. Ghi lịch sử vào `qc_history` trong `state.json`. Thêm `MAX_QC_RETRIES = 3` ở đầu file. | `main.py` |
+| # | Thời gian | Việc cần làm | File | Status |
+|---|-----------|--------------|------|--------|
+| 1 | 15p | Thêm `ExecutionCheckerTool` vào `tools.py`. Whitelist prefix: `node`, `eslint`, `stylelint`, `pytest`, `pylint`. Validate bằng `shlex.split()`, chặn `;`, `&&`, `\|`, `\|​\|`, `` ` ``, `$(`. Sau validate, dùng `glob.glob()` expand wildcard, gọi `subprocess.run(args, shell=False)`. | `tools.py` | ✅ |
+| 2 | 15p | Sửa task t5 trong `create_dev_team_tasks` (nhánh `is_frontend=True`): thêm trình tự bắt buộc gọi `"Run Checks"` — `node --check`, `eslint` — trước khi kết luận PASS/FAIL. Thêm `ExecutionCheckerTool` vào `tools` của QC agent trong `agents.py`. | `tasks.py`, `agents.py` | ✅ |
+| 3 | 30p | Trong `_run_dev_pipeline` (`main.py`): bọc cụm t4→t5→t6 trong `for qc_attempt in range(1, MAX_QC_RETRIES + 1)`. Nếu t5 chứa `"FAIL"`: trích lý do, nối vào description t4 lần sau. Lần retry cuối bật **Simple Mode** cho t4. Ghi lịch sử vào `qc_history` trong `state.json`. Thêm `MAX_QC_RETRIES = 3` ở đầu file. | `main.py` | ✅ |
 
 **Done:** Hệ thống chạy thử code thực và tự sửa thay vì chỉ nhận xét văn xuôi.
 
 ---
 
-### Sprint 2 — Nâng cấp "Bộ nhớ" · ~45 phút
+### Sprint 2 — Nâng cấp "Bộ nhớ" · ~45 phút ✅ DONE
 **Mục tiêu:** Agent không bị mất ngữ cảnh khi project lớn hơn 20 file.
 
 > **Phụ thuộc:** Sprint 1 phải hoàn thành và ổn định.
 
-| # | Thời gian | Việc cần làm | File |
-|---|-----------|--------------|------|
-| 1 | 15p | Thêm `_build_rag_index()` trong `main.py`. Đếm file trong `src/`: nếu < 20 → set `_rag_enabled = False`, skip; nếu ≥ 20 → **reset ChromaDB collection trước** (`delete_collection` rồi `get_or_create_collection`) rồi embed toàn bộ `src/`. Gọi ngay sau `_extract_and_write_src`. | `main.py` |
-| 2 | 15p | Thêm `CodebaseSearchTool` vào `tools.py` dùng `chromadb`, `n_results=3`. Thêm vào `tools` của QC, Reviewer, Architect trong `agents.py`. Nếu chromadb lỗi: log warning và trả về empty string, pipeline không crash. | `tools.py`, `agents.py` |
-| 3 | 15p | Sửa description t5, t6 trong `create_dev_team_tasks`: inject hướng dẫn có điều kiện — nếu `_rag_enabled=False` thì dùng Read File trực tiếp; nếu `True` thì dùng `"Search Codebase"` để tra cứu, Read File để đọc toàn file khi cần. | `tasks.py` |
+| # | Thời gian | Việc cần làm | File | Status |
+|---|-----------|--------------|------|--------|
+| 1 | 15p | Thêm `_build_rag_index()` trong `main.py`. Đếm file trong `src/`: nếu < 20 → set `_rag_enabled = False`, skip; nếu ≥ 20 → **reset ChromaDB collection trước** (`delete_collection` rồi `get_or_create_collection`) rồi embed toàn bộ `src/`. Gọi ngay sau `_extract_and_write_src`. | `main.py` | ✅ |
+| 2 | 15p | Thêm `CodebaseSearchTool` vào `tools.py` dùng `chromadb`, `n_results=3`. Thêm vào `tools` của QC, Reviewer, Architect trong `agents.py`. Nếu chromadb lỗi: log warning và trả về empty string, pipeline không crash. | `tools.py`, `agents.py` | ✅ |
+| 3 | 15p | Sửa description t5, t6 trong `create_dev_team_tasks`: inject hướng dẫn có điều kiện — nếu `_rag_enabled=False` thì dùng Read File trực tiếp; nếu `True` thì dùng `"Search Codebase"` để tra cứu, Read File để đọc toàn file khi cần. | `tasks.py` | ✅ |
 
 **Done:** Agent tra cứu code cũ trước khi viết code mới, không còn bị mâu thuẫn giữa các file.
 
 ---
 
-### Sprint 3 — Chia nhỏ "Dây chuyền sản xuất" · ~75 phút
+### Sprint 3 — Chia nhỏ "Dây chuyền sản xuất" · ~75 phút ✅ DONE
 **Mục tiêu:** Phá vỡ giới hạn output token, viết được app nhiều file không bị cắt cụt.
 
 > **Phụ thuộc:** Sprint 1 + 2 phải hoàn thành và ổn định.
 
-| # | Thời gian | Việc cần làm | File |
-|---|-----------|--------------|------|
-| 1 | 20p | Sửa task t3 trong `create_dev_team_tasks`: ép Architect output JSON block chuẩn ở cuối response (format `\`\`\`json [...]\`\`\``). Kèm ví dụ trong prompt để giảm ngáo format. | `tasks.py` |
-| 2 | 25p | Viết `_parse_file_inventory(t3_output)` trong `main.py`. Fallback 3 lớp: `json.loads()` → `ast.literal_eval()` → gọi Gemini Flash sửa JSON → trả `[]` nếu vẫn lỗi. Sắp xếp kết quả: `config/constants/utils` lên đầu, UI entry points xuống cuối. | `main.py` |
-| 3 | 30p | Sửa `_run_dev_pipeline`: nếu `file_inventory` không rỗng, thay 1 lần gọi t4 bằng vòng lặp per-file. Mỗi lần gọi `_run_single_task` với description chỉ đề cập 1 file. Nếu `file_inventory` rỗng: fallback về description t4 gốc (single-shot). Report t4 là index tổng hợp link đến từng `t4_<file>.md`. | `main.py` |
+| # | Thời gian | Việc cần làm | File | Status |
+|---|-----------|--------------|------|--------|
+| 1 | 20p | Sửa task t3 trong `create_dev_team_tasks`: ép Architect output JSON block chuẩn ở cuối response (format `\`\`\`json [...]\`\`\``). Kèm ví dụ trong prompt để giảm ngáo format. | `tasks.py` | ✅ |
+| 2 | 25p | Viết `_parse_file_inventory(t3_output)` trong `main.py`. Fallback 3 lớp: `json.loads()` → `ast.literal_eval()` → gọi Gemini Flash sửa JSON → trả `[]` nếu vẫn lỗi. Sắp xếp kết quả: `config/constants/utils` lên đầu, UI entry points xuống cuối. | `main.py` | ✅ |
+| 3 | 30p | Sửa `_run_dev_pipeline`: nếu `file_inventory` không rỗng, thay 1 lần gọi t4 bằng vòng lặp per-file. Mỗi lần gọi `_run_single_task` với description chỉ đề cập 1 file. Nếu `file_inventory` rỗng: fallback về description t4 gốc (single-shot). Report t4 là index tổng hợp link đến từng `t4_<file>.md`. | `main.py` | ✅ |
 
 **Done:** Hệ thống tạo ra hàng chục file hoàn chỉnh, mỗi file được Coder tập trung 100% — không còn đầu voi đuôi chuột.
 
