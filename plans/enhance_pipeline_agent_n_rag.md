@@ -461,7 +461,7 @@ Chỉ tính FAIL khi tool chạy ĐƯỢC và output thực sự chứa lỗi.
 
 ---
 
-### Sprint 5 — Generic Pipeline (Language-Agnostic) · ~90 phút 🔄 TODO
+### Sprint 5 — Generic Pipeline (Language-Agnostic) · ~90 phút ✅ DONE
 
 **Mục tiêu:** Xóa mọi hardcode ngôn ngữ (node, eslint, pytest...) khỏi prompt và tool. Architect quyết định toàn bộ bộ lệnh QC và Docker image — pipeline chỉ là "ống dẫn" thực thi.
 
