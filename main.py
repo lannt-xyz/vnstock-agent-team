@@ -30,6 +30,7 @@ Yêu cầu:
 2) Tự động lấy dữ liệu từ google sheets, yêu cầu người dùng link sheet và chọn sheet cần lấy dữ liệu, sau đó hiển thị câu hỏi trắc nghiệm dựa trên dữ liệu đó.
 3) Lưu kết quả làm bài của học sinh vào 1 sheet trên cùng file
 4) Hướng dẫn chi tiết cách triển khai trên server (nếu cần).
+5) Nếu dùng API keys thì phải có cơ chế bảo mật, không hardcode vào code.
 Yêu cầu về kết quả:
 - Code sạch, có comment giải thích,
 - Cấu trúc thư mục rõ ràng,
