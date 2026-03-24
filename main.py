@@ -2,6 +2,7 @@ import ast
 import os
 import re
 import json
+import subprocess
 import traceback
 from datetime import datetime, timezone
 from dotenv import load_dotenv
@@ -208,6 +209,95 @@ def _run_single_task(agent, description: str, expected_output: str, out_rel: str
     return out_path.read_text("utf-8") if out_path.exists() else ""
 
 
+# ── Docker fallback Dockerfile (used when Architect doesn't generate one) ────
+_FALLBACK_DOCKERFILE = """\
+FROM python:3.11-slim
+
+# Node.js 20
+RUN apt-get update && apt-get install -y curl && \\
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \\
+    apt-get install -y nodejs && apt-get clean
+
+# JS tools
+RUN npm install -g eslint stylelint prettier
+
+# Python tools
+RUN pip install --no-cache-dir pytest pylint
+
+# Non-root user for security
+RUN useradd -m checker
+USER checker
+WORKDIR /workspace
+"""
+
+
+def _ensure_checker_image(cycle: int) -> str:
+    """Build Docker image from Dockerfile.checker (fallback to hardcoded if missing).
+    Returns image tag on success, '' on failure (caller uses local exec).
+    """
+    tag = f"project-checker:{cycle}"
+    dockerfile = WORKSPACE_ROOT / "Dockerfile.checker"
+    if not dockerfile.exists():
+        dockerfile.write_text(_FALLBACK_DOCKERFILE, encoding="utf-8")
+        _log("[docker] Dockerfile.checker missing — wrote hardcoded fallback")
+    try:
+        result = subprocess.run(
+            ["docker", "build", "-t", tag, "-f", str(dockerfile), str(WORKSPACE_ROOT)],
+            capture_output=True, timeout=300,
+        )
+        if result.returncode != 0:
+            _log(f"[docker] Build failed: {result.stderr.decode('utf-8', errors='replace')[:500]}")
+            return ""
+        _log(f"[docker] Image built: {tag}")
+        return tag
+    except FileNotFoundError:
+        _log("[docker] Docker not installed on host — local exec fallback")
+        return ""
+    except subprocess.TimeoutExpired:
+        _log("[docker] docker build timed out after 300s — local exec fallback")
+        return ""
+    except Exception as exc:
+        _log(f"[docker] Unexpected error during build: {exc}")
+        return ""
+
+
+def _start_checker_container(image_tag: str, cycle: int) -> str:
+    """Start a persistent container with workspace volume mounted.
+    Returns container name on success, '' on failure.
+    """
+    name = f"dev-checker-{cycle}"
+    # Remove any stale container with same name
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=15)
+    try:
+        result = subprocess.run(
+            [
+                "docker", "run", "-d", "--name", name,
+                "-v", f"{WORKSPACE_ROOT}:/workspace",
+                "-w", "/workspace",
+                image_tag, "tail", "-f", "/dev/null",
+            ],
+            capture_output=True, timeout=30,
+        )
+        if result.returncode != 0:
+            _log(f"[docker] Container start failed: {result.stderr.decode('utf-8', errors='replace')[:200]}")
+            return ""
+        _log(f"[docker] Container started: {name}")
+        return name
+    except Exception as exc:
+        _log(f"[docker] Container start error: {exc}")
+        return ""
+
+
+def _stop_checker_container(name: str) -> None:
+    """Stop and remove the checker container. Always called in finally."""
+    try:
+        subprocess.run(["docker", "stop", name], capture_output=True, timeout=15)
+        subprocess.run(["docker", "rm", name], capture_output=True, timeout=10)
+        _log(f"[docker] Container stopped and removed: {name}")
+    except Exception as exc:
+        _log(f"[docker] Container cleanup warning: {exc}")
+
+
 def _build_rag_index() -> bool:
     """Build / refresh chromadb index from src/ files.
     - < 20 files: skip (Read File is cheaper and more accurate).
@@ -281,8 +371,7 @@ def _parse_file_inventory(t3_output: str) -> list[dict]:
         return []
 
     raw = match.group(1).strip()
-
-    # Layer 1: json.loads (standard)
+    _log(f"[inventory] raw block preview: {raw[:200]}")
     try:
         data = json.loads(raw)
         if isinstance(data, list):
@@ -327,7 +416,7 @@ def _sanitize_filename(name: str) -> str:
 
 
 def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
-                      request, previous_result, is_frontend) -> str:
+                      request, previous_result, is_frontend, cycle: int = 1) -> str:
     """Step-by-step pipeline with QC retry loop.
     - t3 (Architect) runs once.
     - t4 (Coder) → t5 (QC) loop up to MAX_QC_RETRIES times.
@@ -339,6 +428,8 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
     def read(rel: str) -> str:
         p = WORKSPACE_ROOT / rel
         return p.read_text("utf-8") if p.exists() else "(chưa có)"
+
+    container_name = ""
 
     # Guard already wrote t1 + t2 — just read them
     t1 = read("reports/t1_task_plan.md")
@@ -409,6 +500,10 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
                     f"Viết DUY NHẤT file này:\n"
                     f"Tên: {fname}\n"
                     f"Mục đích: {fdesc}\n\n"
+                    f"QUY TẮC BẮT BUỘC:\n"
+                    f"- Dùng ES6 Modules (export/import). KHÔNG khai báo biến global (window/global/var ở module scope).\n"
+                    f"- Mọi dependency dùng import từ file khác.\n"
+                    f"- Nội dung thực tế, đầy đủ — không placeholder, không TODO.\n"
                     f"OUTPUT FORMAT — dùng chính xác:\n"
                     f"### FILE: {fname}\n"
                     "[nội dung đầy đủ, không placeholder, không TODO]\n\n"
@@ -442,6 +537,14 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
         # Write source files
         written = _extract_and_write_src(t4_raw)
         _log(f"[pipeline] src/ files written: {written}")
+
+        # On first QC attempt: build Docker checker image (Dockerfile.checker written by Coder)
+        if qc_attempt == 1 and not container_name:
+            import tools as _tools_mod
+            image_tag = _ensure_checker_image(cycle)
+            if image_tag:
+                container_name = _start_checker_container(image_tag, cycle)
+                _tools_mod.checker_container = container_name
 
         # Build RAG index (enabled only when src/ ≥ 20 files)
         _build_rag_index()
@@ -550,6 +653,13 @@ def _run_dev_pipeline(pm, plan_reviewer, architect, coder, qc, reviewer,
         "reports/t7_final_report.md",
     )
     _log("[pipeline] t7 done")
+
+    # Stop Docker checker container (cleanup after QC loop is done)
+    if container_name:
+        _stop_checker_container(container_name)
+        import tools as _tools_mod
+        _tools_mod.checker_container = None
+
     return t7
 
 
@@ -666,7 +776,7 @@ if __name__ == "__main__":
         try:
             result = _run_dev_pipeline(
                 pm, plan_reviewer, architect, coder, qc, reviewer,
-                USER_REQUEST, last_result, IS_FRONTEND,
+                USER_REQUEST, last_result, IS_FRONTEND, cycle,
             )
             last_result = result
             _save_state({"cycle": cycle, "last_result": last_result})
@@ -674,6 +784,10 @@ if __name__ == "__main__":
         except Exception as exc:
             _log(f"=== CYCLE {cycle} FAILED: {exc} ===")
             traceback.print_exc()
+            import tools as _tools_mod
+            if _tools_mod.checker_container:
+                _stop_checker_container(_tools_mod.checker_container)
+                _tools_mod.checker_container = None
             _save_state({"cycle": cycle, "last_result": last_result or "", "error": str(exc)})
             _log("State đã được lưu. Chạy lại để vào cycle tiếp theo.")
 

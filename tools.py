@@ -257,6 +257,9 @@ class FinalAnalysisTool(BaseTool):
 # ── RAG state (updated by main.py after _build_rag_index) ───────────────────────
 rag_collection = None  # set to chromadb Collection when RAG is enabled
 
+# ── Docker checker container (set by main.py during _run_dev_pipeline) ──────────
+checker_container: str | None = None  # container name; None = use local exec
+
 
 # ── Tool: Execution Checker ────────────────────────────────────────────────────
 _EXEC_WHITELIST: frozenset = frozenset({"eslint", "stylelint", "node", "pytest", "pylint"})
@@ -320,10 +323,17 @@ class ExecutionCheckerTool(BaseTool):
             else:
                 expanded.append(tok)
 
-        # 5. Execute — shell=False prevents any further injection
+        # 5. Choose executor: docker exec (preferred) or local
+        import tools as _self_mod
+        if _self_mod.checker_container:
+            cmd = ["docker", "exec", _self_mod.checker_container] + expanded
+        else:
+            cmd = expanded
+
+        # Execute — shell=False prevents any further injection
         try:
             proc = subprocess.run(
-                expanded,
+                cmd,
                 cwd=str(WORKSPACE_ROOT),
                 capture_output=True,
                 timeout=30,
@@ -331,11 +341,13 @@ class ExecutionCheckerTool(BaseTool):
             out = proc.stdout.decode("utf-8", errors="replace")
             err = proc.stderr.decode("utf-8", errors="replace")
             combined = (out + err).strip()
+            if proc.returncode == 127:
+                return f"[TOOL_NOT_INSTALLED] '{expanded[0]}' not found (exit 127)."
             return combined or f"(exit code {proc.returncode}, no output)"
         except subprocess.TimeoutExpired:
             return "[ERROR] Command timed out after 30 seconds."
         except FileNotFoundError:
-            return f"[ERROR] Command not found: '{expanded[0]}'. Is it installed?"
+            return f"[TOOL_NOT_INSTALLED] '{expanded[0]}' not found on host. Is it installed?"
         except Exception as exc:
             return f"[ERROR] {exc}"
 

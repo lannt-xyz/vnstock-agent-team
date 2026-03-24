@@ -69,9 +69,10 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             "Dùng Read File đọc 'reports/t1_task_plan.md' và 'reports/t2_plan_review.md'.\n"
             "Xuất thiết kế kiến trúc gồm:\n"
             "1. Tech stack TRỰC TIẾP từ yêu cầu — web app Google Sheets → HTML+JS+Google Sheets API.\n"
-            "2. Danh sách TẤT CẢ file cần tạo với đường dẫn 'src/...' và mô tả nội dung.\n"
-            "3. Design Pattern và lý do.\n"
-            "4. Data flow giữa các module.\n\n"
+            "2. Thiết kế theo chuẩn ES Modules hiện đại — mỗi file là một module độc lập với export/import rõ ràng. Không dùng global namespace hay window object.\n"
+            "3. Danh sách TẤT CẢ file cần tạo với đường dẫn 'src/...' và mô tả nội dung.\n"
+            "4. Design Pattern và lý do.\n"
+            "5. Data flow giữa các module.\n\n"
             "SAU PHẦN MÔ TẢ KIẾN TRÚC, xuất danh sách file theo đúng format sau:\n"
             "```json\n"
             "[\n"
@@ -79,7 +80,9 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             '  {"name": "src/app.js",    "description": "Entry point, khởi tạo app"}\n'
             "]\n"
             "```\n"
-            "Không thêm text ngoài JSON block này."
+            "⚠️ BẮT BUỘC: Kết thúc response bằng JSON block trên. Không thêm text nào sau JSON.\n"
+            "⚠️ BẮT BUỘC: Thêm MỘT ENTRY cho file 'Dockerfile.checker' vào JSON inventory:\n"
+            '  {"name": "Dockerfile.checker", "description": "Docker QC environment — cài đủ runtime và linter phù hợp tech stack"}'
         ),
         agent=architect,
         context=[t1, t2],
@@ -128,6 +131,9 @@ def create_dev_team_tasks(pm, plan_reviewer, architect, coder, qc, reviewer, req
             "   - Bảo mật: không hardcode API key, không XSS rõ ràng.\n"
             "   - Responsive: meta viewport, CSS media query.\n"
             "4. Kết luận PASS chỉ khi bước 1+2 không có syntax error.\n"
+            "QUAN TRỌNG — Nếu output tool bắt đầu bằng [TOOL_NOT_INSTALLED]:\n"
+            "  → Ghi chú vào báo cáo: '<tool>: not installed — bỏ qua'\n"
+            "  → KHÔNG tính là FAIL. Chỉ FAIL khi tool chạy được và output chứa lỗi thật.\n"
             "Xuất báo cáo: PASS hoặc FAIL kèm stdout thực tế từ tool."
         )
         t5_expected = "Báo cáo QC: PASS hoặc FAIL kèm output thực tế từ node/eslint."
